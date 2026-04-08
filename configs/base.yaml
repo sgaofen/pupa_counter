@@ -174,6 +174,17 @@ detector:
   cellpose_max_side_px: 2400
   cellpose_flow_threshold: 0.4
   cellpose_cellprob_threshold: 0.0
+  # Conservative second-pass split for large, blob-like Cellpose masks.
+  # This targets the common "two touching pupae became one fat instance"
+  # failure mode on high-quality annotated sheets.
+  cellpose_overlap_split_enabled: true
+  cellpose_overlap_split_area_ratio: 1.70
+  cellpose_overlap_split_max_aspect_ratio: 1.60
+  cellpose_overlap_split_max_eccentricity: 0.80
+  cellpose_overlap_split_peak_min_distance: 3
+  cellpose_overlap_split_peak_abs_threshold: 1.0
+  cellpose_overlap_split_min_child_area_ratio: 0.35
+  cellpose_overlap_split_max_children: 3
   clean_filter_max_mean_v: 190.0
   clean_filter_max_color_score: 0.32
   clean_png_supplement_enabled: true

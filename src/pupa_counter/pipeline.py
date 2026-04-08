@@ -18,6 +18,7 @@ from pupa_counter.count.summarize import combine_instances_for_counting, select_
 from pupa_counter.detect.brown_mask import detect_brown_candidates
 from pupa_counter.detect.classifier import apply_optional_classifier, load_classifier
 from pupa_counter.detect.cellpose_postprocess import build_clean_png_supplement, calibrate_cellpose_detections
+from pupa_counter.detect.cellpose_split import split_large_cellpose_instances
 from pupa_counter.detect.cluster_fallback import (
     apply_vision_cluster_counts,
     attach_cluster_count_estimates,
@@ -156,6 +157,13 @@ def run_pipeline(
 
             brown_mask = np.zeros(cleaned.shape[:2], dtype=np.uint8)
             components_df = cellpose_detect(cleaned, cfg)
+            if not components_df.empty:
+                components_df = split_large_cellpose_instances(
+                    components_df,
+                    cleaned.shape[:2],
+                    source_type=record.source_type,
+                    cfg=cfg,
+                )
             features_df = featurize_components(cleaned, blue_mask, components_df) if not components_df.empty else components_df.copy()
             labeled_df = calibrate_cellpose_detections(features_df, source_type=record.source_type, cfg=cfg) if not features_df.empty else features_df.copy()
 

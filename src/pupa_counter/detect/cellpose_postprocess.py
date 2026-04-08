@@ -93,7 +93,13 @@ def calibrate_cellpose_detections(
     frame["rule_score"] = raw_scores
     frame["cluster_unresolved"] = False
     frame["cluster_area_threshold"] = 0.0
-    frame["detector_source"] = "cellpose"
+    parent_ids = frame["parent_component_id"] if "parent_component_id" in frame.columns else pd.Series([None] * len(frame))
+    detector_source = np.where(
+        parent_ids.notna(),
+        "cellpose_split",
+        "cellpose",
+    )
+    frame["detector_source"] = detector_source
     return frame
 
 

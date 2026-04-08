@@ -198,6 +198,14 @@ class DetectorConfig:
     cellpose_max_side_px: int = 1400
     cellpose_flow_threshold: float = 0.4
     cellpose_cellprob_threshold: float = 0.0
+    cellpose_overlap_split_enabled: bool = True
+    cellpose_overlap_split_area_ratio: float = 1.70
+    cellpose_overlap_split_max_aspect_ratio: float = 1.60
+    cellpose_overlap_split_max_eccentricity: float = 0.80
+    cellpose_overlap_split_peak_min_distance: int = 3
+    cellpose_overlap_split_peak_abs_threshold: float = 1.0
+    cellpose_overlap_split_min_child_area_ratio: float = 0.35
+    cellpose_overlap_split_max_children: int = 3
     clean_filter_max_mean_v: float = 190.0
     clean_filter_max_color_score: float = 0.32
     clean_png_supplement_enabled: bool = True

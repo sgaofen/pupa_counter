@@ -93,6 +93,22 @@ What is now solid:
 - Cellpose is still the right primary backend for dense annotated PNGs.
 - The old `estimate x3/x4` style cluster reasoning should stay out of the main path.
 - A light, source-aware clean-image postprocess helps a bit on clean truth without harming the annotated wins.
+- A conservative Cellpose overlap split now exists for a small number of large,
+  blob-like masks that likely contain two touching pupae.
+
+### Follow-up overlap split check
+
+On the annotated strong subset (`7`, `22`, `74`), the overlap split pass produced:
+
+- `scan_20260313_7`: `105 -> 106`
+- `scan_20260313_74`: `100 -> 103`
+- `scan_20260313_22`: unchanged at `119`
+
+Interpretation:
+
+- the new split pass is doing real work on some obvious merged masks
+- it is currently conservative enough not to destabilize the whole image
+- `22` remains a harder case and is not just a simple "one fat mask should become two" problem
 
 What is still open:
 

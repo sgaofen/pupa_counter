@@ -66,7 +66,6 @@ src/pupa_counter/
   eval/
 tests/
 MAINTAINER_NOTES.md
-PROJECT_HANDOFF_2026-04-07.md
 PROJECT_STATUS_2026-04-08.md
 ```
 
@@ -146,6 +145,8 @@ The end-to-end flow in `src/pupa_counter/pipeline.py` is:
 - best current backend
 - strongest on dense annotated PNGs
 - uses `src/pupa_counter/detect/cellpose_backend.py`
+- includes a conservative second-pass split for a small number of large,
+  blob-like Cellpose masks that likely contain two touching pupae
 - then runs source-aware cleanup in `src/pupa_counter/detect/cellpose_postprocess.py`
 
 `classical`:
