@@ -18,7 +18,11 @@ from pupa_counter.count.summarize import combine_instances_for_counting, select_
 from pupa_counter.detect.brown_mask import detect_brown_candidates
 from pupa_counter.detect.classifier import apply_optional_classifier, load_classifier
 from pupa_counter.detect.cellpose_dual_path import merge_annotated_detection_paths, merge_annotated_pair_rescue
-from pupa_counter.detect.cellpose_postprocess import build_clean_png_supplement, calibrate_cellpose_detections
+from pupa_counter.detect.cellpose_postprocess import (
+    build_annotated_png_supplement,
+    build_clean_png_supplement,
+    calibrate_cellpose_detections,
+)
 from pupa_counter.detect.cellpose_dense_patch import refine_dense_cellpose_patches
 from pupa_counter.detect.cellpose_split import split_large_cellpose_instances
 from pupa_counter.detect.cluster_fallback import (
@@ -39,7 +43,7 @@ from pupa_counter.io.save import ensure_run_dirs, save_dataframe, save_image, sa
 from pupa_counter.preprocess.blue_mask import detect_blue_annotations
 from pupa_counter.preprocess.crop import crop_scanner_border
 from pupa_counter.preprocess.inpaint import remove_or_ignore_blue
-from pupa_counter.preprocess.normalize import normalize_background
+from pupa_counter.preprocess.normalize import build_reference_view, normalize_background
 from pupa_counter.report.html_report import build_run_report
 from pupa_counter.report.overlay import build_overlay
 from pupa_counter.report.review_queue import build_review_flags, build_review_queue_frame
@@ -148,14 +152,40 @@ def run_pipeline(
 
         raster = rasterize_record(record, dpi=cfg.input.raster_dpi)
         cropped = crop_scanner_border(raster, cfg)
+        reference_view = build_reference_view(cropped, cfg)
         normalized = normalize_background(cropped, cfg)
         blue_mask = detect_blue_annotations(normalized, cfg)
         blue_components_df = extract_blue_components(blue_mask, normalized.shape)
         blue_supervision = summarize_blue_supervision(blue_components_df, blue_mask, normalized.shape)
         cleaned = remove_or_ignore_blue(normalized, blue_mask, cfg)
+        reference_cleaned = remove_or_ignore_blue(reference_view, blue_mask, cfg)
 
         if cfg.detector.backend == "cellpose":
             from pupa_counter.detect.cellpose_backend import detect_instances as cellpose_detect
+
+            def _run_annotated_alt_path(alt_image, *, feature_image, component_prefix: str):
+                alt_components_df = cellpose_detect(
+                    alt_image,
+                    cfg,
+                    diameter=dual_path_diameter,
+                    flow_threshold=cfg.detector.cellpose_annotated_dual_path_flow_threshold,
+                    cellprob_threshold=cfg.detector.cellpose_annotated_dual_path_cellprob_threshold,
+                    component_prefix=component_prefix,
+                )
+                if alt_components_df.empty:
+                    return alt_components_df.copy()
+                alt_components_df = split_large_cellpose_instances(
+                    alt_components_df,
+                    alt_image.shape[:2],
+                    source_type=record.source_type,
+                    cfg=cfg,
+                )
+                alt_features_df = featurize_components(feature_image, blue_mask, alt_components_df)
+                return calibrate_cellpose_detections(
+                    alt_features_df,
+                    source_type=record.source_type,
+                    cfg=cfg,
+                )
 
             brown_mask = np.zeros(cleaned.shape[:2], dtype=np.uint8)
             components_df = cellpose_detect(cleaned, cfg)
@@ -167,7 +197,7 @@ def run_pipeline(
                     cfg=cfg,
                 )
                 components_df = refine_dense_cellpose_patches(
-                    normalized,
+                    reference_cleaned,
                     components_df,
                     source_type=record.source_type,
                     cfg=cfg,
@@ -183,39 +213,36 @@ def run_pipeline(
                         float(np.median(components_df["major_axis_px"].astype(float)))
                         * cfg.detector.cellpose_annotated_dual_path_diameter_scale,
                     )
-                normalized_components_df = cellpose_detect(
+                normalized_labeled_df = _run_annotated_alt_path(
                     normalized,
-                    cfg,
-                    diameter=dual_path_diameter,
-                    flow_threshold=cfg.detector.cellpose_annotated_dual_path_flow_threshold,
-                    cellprob_threshold=cfg.detector.cellpose_annotated_dual_path_cellprob_threshold,
-                    component_prefix="np",
+                    feature_image=normalized,
+                    component_prefix="npn",
                 )
-                if not normalized_components_df.empty:
-                    normalized_components_df = split_large_cellpose_instances(
-                        normalized_components_df,
-                        normalized.shape[:2],
-                        source_type=record.source_type,
-                        cfg=cfg,
-                    )
-                    normalized_features_df = featurize_components(normalized, blue_mask, normalized_components_df)
-                    normalized_labeled_df = calibrate_cellpose_detections(
-                        normalized_features_df,
-                        source_type=record.source_type,
-                        cfg=cfg,
-                    )
+                if not normalized_labeled_df.empty:
                     labeled_df = merge_annotated_detection_paths(
                         labeled_df,
                         normalized_labeled_df,
                         image_shape=normalized.shape[:2],
                         cfg=cfg,
                     )
+                reference_labeled_df = _run_annotated_alt_path(
+                    reference_cleaned,
+                    feature_image=reference_cleaned,
+                    component_prefix="npr",
+                )
+                if not reference_labeled_df.empty:
+                    labeled_df = merge_annotated_detection_paths(
+                        labeled_df,
+                        reference_labeled_df,
+                        image_shape=reference_cleaned.shape[:2],
+                        cfg=cfg,
+                    )
 
             if record.source_type == "annotated_png" and cfg.detector.cellpose_annotated_pair_rescue_enabled:
-                brown_mask = detect_brown_candidates(normalized, blue_mask=blue_mask, cfg=cfg)
+                brown_mask = detect_brown_candidates(reference_view, blue_mask=blue_mask, cfg=cfg)
                 classical_components_df = extract_components(brown_mask, cfg)
                 classical_features_df = (
-                    featurize_components(normalized, blue_mask, classical_components_df)
+                    featurize_components(reference_view, blue_mask, classical_components_df)
                     if not classical_components_df.empty
                     else classical_components_df.copy()
                 )
@@ -225,16 +252,24 @@ def run_pipeline(
                     else classical_features_df.copy()
                 )
                 classical_split_df = (
-                    split_cluster_candidates(normalized, classical_labeled_df, blue_mask=blue_mask, cfg=cfg)
+                    split_cluster_candidates(reference_view, classical_labeled_df, blue_mask=blue_mask, cfg=cfg)
                     if not classical_labeled_df.empty
                     else classical_labeled_df.copy()
                 )
                 labeled_df = merge_annotated_pair_rescue(
                     labeled_df,
                     classical_split_df,
-                    image_shape=normalized.shape[:2],
+                    image_shape=reference_view.shape[:2],
                     cfg=cfg,
                 )
+                supplement_df = build_annotated_png_supplement(
+                    labeled_df,
+                    classical_split_df,
+                    source_type=record.source_type,
+                    cfg=cfg,
+                )
+                if not supplement_df.empty:
+                    labeled_df = pd.concat([labeled_df, supplement_df], ignore_index=True)
 
             if record.source_type == "clean_png" and cfg.detector.clean_png_supplement_enabled:
                 brown_mask = detect_brown_candidates(cleaned, blue_mask=blue_mask, cfg=cfg)
@@ -356,7 +391,8 @@ def run_pipeline(
 
         if cfg.output.save_intermediate_masks:
             save_image(run_dirs["intermediate"] / ("%s_stage0.png" % record.image_id), normalized)
-            save_image(run_dirs["intermediate"] / ("%s_normalized_stage0.png" % record.image_id), normalized)
+            save_image(run_dirs["intermediate"] / ("%s_reference_stage0.png" % record.image_id), reference_view)
+            save_image(run_dirs["intermediate"] / ("%s_normalized_stage0.png" % record.image_id), reference_view)
             save_mask(run_dirs["intermediate"] / ("%s_blue_mask.png" % record.image_id), blue_mask)
             save_image(run_dirs["intermediate"] / ("%s_clean_stage1.png" % record.image_id), cleaned)
             save_mask(run_dirs["intermediate"] / ("%s_brown_mask.png" % record.image_id), brown_mask)

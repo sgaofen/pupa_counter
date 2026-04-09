@@ -222,3 +222,72 @@ This is intentionally additive:
 3. If we keep improving the current codebase, the next likely win is:
    - a merge / dedupe pass for oversplit Cellpose instances in dense overlap regions
    - not more classical rejection
+
+## Latest Annotated Recall Pass
+
+The newest follow-up focused on one user-confirmed property of the current
+errors:
+
+- the existing counted pupae are usually correct
+- the dominant error is **undercount**
+- the hardest misses are touching / merged local groups
+
+So this pass intentionally biased the annotated PNG path toward **higher
+recall**.
+
+Files changed in this pass:
+
+- `/Users/stephenyu/Documents/New project/src/pupa_counter/preprocess/normalize.py`
+- `/Users/stephenyu/Documents/New project/src/pupa_counter/detect/cellpose_split.py`
+- `/Users/stephenyu/Documents/New project/src/pupa_counter/detect/cellpose_postprocess.py`
+- `/Users/stephenyu/Documents/New project/src/pupa_counter/pipeline.py`
+- `/Users/stephenyu/Documents/New project/src/pupa_counter/config.py`
+- `/Users/stephenyu/Documents/New project/configs/base.yaml`
+- `/Users/stephenyu/Documents/New project/tests/test_reference_view.py`
+- `/Users/stephenyu/Documents/New project/tests/test_cellpose_split.py`
+- `/Users/stephenyu/Documents/New project/tests/test_cellpose_postprocess.py`
+
+What changed:
+
+- annotated runs now build a lighter `reference` view that stays closer to the
+  original crop and avoids the strong darkening from the main normalized path
+- that lighter view is saved as both `reference_stage0` and
+  `normalized_stage0` for human review, so the review artifact is no longer
+  visually identical to `clean_stage1`
+- the Cellpose overlap split on annotated PNGs now considers any sufficiently
+  large mask, not only fat/round masks, so elongated dumbbell-like touching
+  pairs can be split
+- a new annotated-only classical supplement can add back a small number of
+  strong unmatched detections when the learned route misses a real touching
+  pair entirely
+
+Automated tests after this pass:
+
+- `17 passed` on the focused postprocess / split / overlay subset
+
+Annotated review subset comparison (`v4 -> v5`):
+
+- improved total count on `9 / 15`
+- worsened total count on `3 / 15`
+- improved middle-band count on `8 / 15`
+- worsened middle-band count on `5 / 15`
+
+Largest total-count gains:
+
+- `22`: `128 -> 143`
+- `25`: `121 -> 140`
+- `79`: `110 -> 122`
+- `7`: `111 -> 121`
+
+Important caveat:
+
+- the new pass helps recall in several user-flagged dense cases, but it is not
+  a universal win yet
+- `74` keeps its total (`119`) but still shifts some accepted detections out of
+  the middle band
+- `12`, `19`, and `97` are good examples of why this still needs human QA
+
+Newest review pack:
+
+- `/Users/stephenyu/Documents/New project/data/manual_review/annotated_bulk_review_2026-04-08_v5`
+- `/Users/stephenyu/Documents/New project/data/manual_review/annotated_bulk_review_2026-04-08_v5.zip`

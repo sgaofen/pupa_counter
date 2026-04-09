@@ -194,3 +194,80 @@ def build_clean_png_supplement(
     supplement["cluster_area_threshold"] = supplement["cluster_area_threshold"].fillna(0.0)
     supplement["detector_source"] = "classical_addon"
     return supplement.reset_index(drop=True)
+
+
+def build_annotated_png_supplement(
+    cellpose_df: pd.DataFrame,
+    classical_df: pd.DataFrame,
+    *,
+    source_type: str,
+    cfg: AppConfig,
+) -> pd.DataFrame:
+    """Add a small number of strong classical-only candidates on annotated PNGs.
+
+    This is a recall-first patch for the failure mode the user highlighted:
+    two touching pupae can disappear entirely from the Cellpose route, but the
+    classical split path still produces plausible small brown components. We
+    only add unmatched classical detections that look pupa-like and keep the
+    cap low so the supplement cannot dominate the image.
+    """
+    if source_type != "annotated_png" or not cfg.detector.cellpose_annotated_png_supplement_enabled:
+        return pd.DataFrame()
+    if classical_df.empty:
+        return pd.DataFrame()
+
+    strong = classical_df.loc[
+        classical_df["is_active"].astype(bool)
+        & classical_df["label"].isin(["pupa"])
+        & (classical_df["confidence"].astype(float) >= cfg.counting.min_instance_confidence)
+    ].copy()
+    if strong.empty:
+        return pd.DataFrame()
+
+    unmatched_rows = []
+    for _, classical_row in strong.iterrows():
+        best_iou = 0.0
+        for _, cellpose_row in cellpose_df.iterrows():
+            best_iou = max(best_iou, _bbox_iou(classical_row, cellpose_row))
+            if best_iou >= 0.25:
+                break
+        if best_iou < 0.25:
+            unmatched_rows.append(classical_row)
+
+    if not unmatched_rows:
+        return pd.DataFrame()
+
+    unmatched = pd.DataFrame(unmatched_rows)
+    unmatched_ratio = float(len(unmatched) / max(len(cellpose_df), 1))
+    if unmatched_ratio > cfg.detector.cellpose_annotated_png_supplement_max_unmatched_ratio:
+        return pd.DataFrame()
+
+    keep_mask = (
+        (unmatched["area_px"].astype(float) >= cfg.detector.cellpose_annotated_png_supplement_min_area_px)
+        & (unmatched["area_px"].astype(float) <= cfg.detector.cellpose_annotated_png_supplement_max_area_px)
+        & (unmatched["mean_v"].astype(float) <= cfg.detector.cellpose_annotated_png_supplement_max_mean_v)
+        & (unmatched["color_score"].astype(float) >= cfg.detector.cellpose_annotated_png_supplement_min_color_score)
+        & (unmatched["local_contrast"].astype(float) >= cfg.detector.cellpose_annotated_png_supplement_min_local_contrast)
+        & (
+            unmatched["blue_overlap_ratio"].fillna(0.0).astype(float)
+            <= cfg.detector.cellpose_annotated_png_supplement_max_blue_overlap_ratio
+        )
+        & (
+            unmatched["border_touch_ratio"].fillna(0.0).astype(float)
+            <= cfg.detector.cellpose_annotated_png_supplement_max_border_touch_ratio
+        )
+    )
+    supplement = unmatched.loc[keep_mask].copy()
+    if supplement.empty:
+        return supplement
+
+    if len(supplement) > cfg.detector.cellpose_annotated_png_supplement_max_added_count:
+        supplement = supplement.sort_values(
+            ["confidence", "color_score", "local_contrast"],
+            ascending=[False, False, False],
+        ).head(cfg.detector.cellpose_annotated_png_supplement_max_added_count)
+
+    supplement["cluster_unresolved"] = False
+    supplement["cluster_area_threshold"] = supplement["cluster_area_threshold"].fillna(0.0)
+    supplement["detector_source"] = "annotated_classical_addon"
+    return supplement.reset_index(drop=True)

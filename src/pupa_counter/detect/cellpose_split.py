@@ -51,11 +51,15 @@ def split_large_cellpose_instances(
         aspect_ratio = float(row_dict.get("aspect_ratio", 0.0) or 0.0)
         eccentricity = float(row_dict.get("eccentricity", 1.0) or 1.0)
 
-        eligible = (
-            area_px >= median_area * cfg.detector.cellpose_overlap_split_area_ratio
-            and aspect_ratio <= cfg.detector.cellpose_overlap_split_max_aspect_ratio
-            and eccentricity <= cfg.detector.cellpose_overlap_split_max_eccentricity
-        )
+        area_gate = area_px >= median_area * cfg.detector.cellpose_overlap_split_area_ratio
+        if source_type == "annotated_png" and cfg.detector.cellpose_overlap_split_annotated_ignore_shape:
+            eligible = area_gate
+        else:
+            eligible = (
+                area_gate
+                and aspect_ratio <= cfg.detector.cellpose_overlap_split_max_aspect_ratio
+                and eccentricity <= cfg.detector.cellpose_overlap_split_max_eccentricity
+            )
         if not eligible:
             rows.append(row_dict)
             continue

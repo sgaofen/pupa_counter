@@ -8,6 +8,29 @@ import numpy as np
 from pupa_counter.config import AppConfig
 
 
+def build_reference_view(image: np.ndarray, cfg: AppConfig = None) -> np.ndarray:
+    """Build a color-preserving reference view for secondary detection paths.
+
+    The main normalized view intentionally boosts local contrast to help the
+    primary detector, but that same boost can visually thicken touching pupae
+    until narrow gaps disappear. The reference view stays much closer to the
+    original crop and only applies a very gentle white balancing so the
+    background remains near-white without darkening the pupae themselves.
+    """
+    cfg = cfg or AppConfig()
+    reference = image.astype(np.float32).copy()
+
+    for channel_index in range(3):
+        channel = reference[:, :, channel_index]
+        high = np.percentile(channel, 99.5)
+        if high <= 1.0:
+            continue
+        scale = min(1.08, 250.0 / float(high))
+        reference[:, :, channel_index] = np.clip(channel * scale, 0.0, 255.0)
+
+    return reference.astype(np.uint8)
+
+
 def normalize_background(image: np.ndarray, cfg: AppConfig = None) -> np.ndarray:
     cfg = cfg or AppConfig()
     normalized = image.astype(np.float32).copy()

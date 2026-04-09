@@ -40,6 +40,8 @@ What is solid right now:
 - overlays now number the accepted `middle`-band detections in green, which makes human QA easier
 - outputs now also include a `top 5%` count derived from the same top-to-bottom anchor span
 - the clean-scan truth subset improved to `MAE = 6.00` in the latest iteration
+- a lighter `reference` view is now saved for annotated PNG review, so human QA
+  can compare the dark `clean_stage1` image against an original-like view
 
 What is still open:
 
@@ -52,7 +54,8 @@ That last point is important: if a result looks suspicious, always inspect the s
 The current code does **not** blindly switch the whole detector to the original image. Instead it uses a hybrid rule:
 
 - the main full-image pass still runs on the cleaned image, because that suppresses blue annotations well
-- only dense annotated patches are re-checked on the normalized/original-looking image
+- dense annotated patches are re-checked on higher-recall views
+- a lighter `reference` view is saved and used as a secondary rescue path for touching pupae
 - that dense-patch rescue exists specifically to recover touching pupae that became too merged after cleaning
 
 ## Repository Layout
@@ -156,8 +159,10 @@ The end-to-end flow in `src/pupa_counter/pipeline.py` is:
 - includes a conservative second-pass split for a small number of large,
   blob-like Cellpose masks that likely contain two touching pupae
 - includes a dense-patch rescue pass in `src/pupa_counter/detect/cellpose_dense_patch.py`
-  that re-runs Cellpose on the normalized image for only the most crowded
-  annotated regions
+  that re-runs Cellpose on alternate annotated views for only the most crowded
+  regions
+- includes a recall-biased annotated supplement that can add a small number of
+  strong classical-only detections when the learned path misses a touching pair
 - then runs source-aware cleanup in `src/pupa_counter/detect/cellpose_postprocess.py`
 
 `classical`:
@@ -209,6 +214,12 @@ Overlay convention:
 - gold horizontal line = the `5%` guide line
 - small green numbers = the accepted `middle` instances, ordered top-to-bottom then left-to-right
 
+Annotated intermediate convention:
+
+- `*_clean_stage1.png` = the main cleaned view used by the primary full-image detector
+- `*_normalized_stage0.png` = a lighter, original-like review view for annotated sheets
+- `*_reference_stage0.png` = the same reference-style rescue view kept under an explicit name
+
 During long runs, partial progress is also written:
 
 - `counts.partial.csv`
@@ -235,7 +246,8 @@ This usually tells you which failure mode happened:
 
 ## Current Validation Snapshot
 
-Latest local validation from `PROJECT_STATUS_2026-04-08.md`:
+Latest local validation from `PROJECT_STATUS_2026-04-08.md` plus the annotated
+`v5` review subset:
 
 - automated tests: `23 passed`
 - clean truth subset:
@@ -247,9 +259,10 @@ Latest local validation from `PROJECT_STATUS_2026-04-08.md`:
   - `scan0005` -> `53 vs 54`
 - clean-set `MAE = 6.00`
 - annotated hard cases:
-  - `scan_20260313_7` -> `105 vs 109`
-  - `scan_20260313_74` -> `100 vs 105`
-  - `scan_20260313_22` -> still unresolved and overcounted
+  - `scan_20260313_7` review subset: `111 -> 121`
+  - `scan_20260313_22` review subset: `128 -> 143`
+  - `scan_20260313_25` review subset: `121 -> 140`
+  - `scan_20260313_74` review subset: total stayed `119`, but middle-band count is still not fully recovered
 
 ## Gold Labels And Manual Review
 

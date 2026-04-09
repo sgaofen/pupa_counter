@@ -181,10 +181,14 @@ detector:
   cellpose_overlap_split_area_ratio: 1.70
   cellpose_overlap_split_max_aspect_ratio: 1.60
   cellpose_overlap_split_max_eccentricity: 0.80
+  # Annotated scans often merge two touching pupae into one long dumbbell.
+  # Let annotated overlap-split look at any sufficiently large mask and rely
+  # on multiple distance peaks, instead of requiring the blob to look round.
+  cellpose_overlap_split_annotated_ignore_shape: true
   cellpose_overlap_split_peak_min_distance: 3
   cellpose_overlap_split_peak_abs_threshold: 1.0
   cellpose_overlap_split_min_child_area_ratio: 0.35
-  cellpose_overlap_split_max_children: 3
+  cellpose_overlap_split_max_children: 4
   # Dense local colonies sometimes under-split after cleaning. Re-run Cellpose
   # on the original normalized patch with a slightly smaller diameter, but only
   # if the patch is already dense and the refined patch adds a modest number of
@@ -232,6 +236,19 @@ detector:
   cellpose_annotated_pair_rescue_min_area_ratio: 0.35
   cellpose_annotated_pair_rescue_max_area_ratio: 1.85
   cellpose_annotated_pair_rescue_max_gain_ratio: 1.80
+  # Recall-first supplement for annotated PNGs: when Cellpose misses a real
+  # touching pair entirely, allow a small number of strong classical-only
+  # candidates to be added back.
+  cellpose_annotated_png_supplement_enabled: true
+  cellpose_annotated_png_supplement_max_unmatched_ratio: 0.22
+  cellpose_annotated_png_supplement_max_added_count: 14
+  cellpose_annotated_png_supplement_min_area_px: 40
+  cellpose_annotated_png_supplement_max_area_px: 260
+  cellpose_annotated_png_supplement_max_mean_v: 185.0
+  cellpose_annotated_png_supplement_min_color_score: 0.14
+  cellpose_annotated_png_supplement_min_local_contrast: 3.5
+  cellpose_annotated_png_supplement_max_blue_overlap_ratio: 0.10
+  cellpose_annotated_png_supplement_max_border_touch_ratio: 0.35
   clean_filter_max_mean_v: 190.0
   clean_filter_max_color_score: 0.32
   clean_png_supplement_enabled: true
