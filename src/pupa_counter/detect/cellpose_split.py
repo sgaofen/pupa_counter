@@ -13,8 +13,6 @@ If any of those conditions fail, the original Cellpose mask is kept as-is.
 
 from __future__ import annotations
 
-import itertools
-
 import numpy as np
 import pandas as pd
 from scipy import ndimage as ndi
@@ -61,36 +59,6 @@ def split_large_cellpose_instances(
             return np.zeros_like(values, dtype=np.float32)
         return np.clip((values.astype(np.float32) - low) / (high - low), 0.0, 1.0)
 
-    def _build_combo_map(local_mask: np.ndarray, row_dict: dict, *, brown_weight: float) -> np.ndarray | None:
-        if guide_image is None:
-            return None
-        y0 = int(row_dict["bbox_y0"])
-        x0 = int(row_dict["bbox_x0"])
-        y1 = int(row_dict["bbox_y1"])
-        x1 = int(row_dict["bbox_x1"])
-        if y1 <= y0 or x1 <= x0:
-            return None
-        local_patch = guide_image[y0:y1, x0:x1]
-        if local_patch.shape[:2] != local_mask.shape:
-            return None
-        rgb = local_patch.astype(np.float32)
-        brownness = rgb[:, :, 0] - 0.6 * rgb[:, :, 2] - 0.4 * rgb[:, :, 1]
-        brownness = _normalized(brownness, local_mask)
-        distance = ndi.distance_transform_edt(local_mask)
-        distance = _normalized(distance, local_mask)
-        combo = ((1.0 - brown_weight) * distance + brown_weight * brownness) * local_mask.astype(np.float32)
-        return combo
-
-    def _row_aspect_ratio(row_dict: dict) -> float:
-        ratio = row_dict.get("aspect_ratio")
-        if ratio is not None and float(ratio) > 0.0:
-            return float(ratio)
-        major_axis = float(row_dict.get("major_axis_px", 0.0) or 0.0)
-        minor_axis = max(float(row_dict.get("minor_axis_px", 0.0) or 0.0), 1.0)
-        if major_axis <= 0.0:
-            return 0.0
-        return major_axis / minor_axis
-
     def _combo_regions(local_mask: np.ndarray, row_dict: dict):
         if (
             source_type != "annotated_png"
@@ -109,13 +77,23 @@ def split_large_cellpose_instances(
         ):
             return []
 
-        combo = _build_combo_map(
-            local_mask,
-            row_dict,
-            brown_weight=float(cfg.detector.cellpose_overlap_split_combo_brown_weight),
-        )
-        if combo is None:
+        y0 = int(row_dict["bbox_y0"])
+        x0 = int(row_dict["bbox_x0"])
+        y1 = int(row_dict["bbox_y1"])
+        x1 = int(row_dict["bbox_x1"])
+        if y1 <= y0 or x1 <= x0:
             return []
+        local_patch = guide_image[y0:y1, x0:x1]
+        if local_patch.shape[:2] != local_mask.shape:
+            return []
+
+        rgb = local_patch.astype(np.float32)
+        brownness = rgb[:, :, 0] - 0.6 * rgb[:, :, 2] - 0.4 * rgb[:, :, 1]
+        brownness = _normalized(brownness, local_mask)
+        distance = ndi.distance_transform_edt(local_mask)
+        distance = _normalized(distance, local_mask)
+        brown_weight = float(cfg.detector.cellpose_overlap_split_combo_brown_weight)
+        combo = ((1.0 - brown_weight) * distance + brown_weight * brownness) * local_mask.astype(np.float32)
 
         peaks = feature.peak_local_max(
             combo,
@@ -156,140 +134,13 @@ def split_large_cellpose_instances(
             return []
         return regions
 
-    def _pairlike_split(local_mask: np.ndarray, row_dict: dict):
-        if (
-            source_type != "annotated_png"
-            or guide_image is None
-            or not cfg.detector.cellpose_overlap_split_pairlike_enabled
-        ):
-            return None, []
-        if bool(row_dict.get("touches_image_border", False)):
-            return None, []
-        if float(row_dict.get("border_touch_ratio", 0.0) or 0.0) > float(
-            cfg.detector.cellpose_overlap_split_combo_max_border_touch_ratio
-        ):
-            return None, []
-
-        area_px = float(row_dict.get("area_px", 0.0) or 0.0)
-        area_ratio = area_px / max(median_area, 1.0)
-        if area_ratio < float(cfg.detector.cellpose_overlap_split_pairlike_min_area_ratio):
-            return None, []
-        if area_ratio > float(cfg.detector.cellpose_overlap_split_pairlike_max_area_ratio):
-            return None, []
-
-        aspect_ratio = _row_aspect_ratio(row_dict)
-        eccentricity = float(row_dict.get("eccentricity", 0.0) or 0.0)
-        extent = float(row_dict.get("extent", 1.0) or 1.0)
-        if aspect_ratio < float(cfg.detector.cellpose_overlap_split_pairlike_min_aspect_ratio):
-            return None, []
-        if aspect_ratio > float(cfg.detector.cellpose_overlap_split_pairlike_max_aspect_ratio):
-            return None, []
-        if eccentricity < float(cfg.detector.cellpose_overlap_split_pairlike_min_eccentricity):
-            return None, []
-        if extent > float(cfg.detector.cellpose_overlap_split_pairlike_max_extent):
-            return None, []
-
-        combo = _build_combo_map(
-            local_mask,
-            row_dict,
-            brown_weight=float(cfg.detector.cellpose_overlap_split_pairlike_brown_weight),
-        )
-        if combo is None:
-            return None, []
-        sigma = float(cfg.detector.cellpose_overlap_split_pairlike_gaussian_sigma)
-        if sigma > 0.0:
-            combo = ndi.gaussian_filter(combo, sigma=sigma) * local_mask.astype(np.float32)
-
-        peaks = feature.peak_local_max(
-            combo,
-            min_distance=cfg.detector.cellpose_overlap_split_pairlike_peak_min_distance,
-            threshold_abs=cfg.detector.cellpose_overlap_split_pairlike_peak_abs_threshold,
-            labels=local_mask.astype(np.uint8),
-        )
-        if peaks.shape[0] < 2:
-            return None, []
-        if peaks.shape[0] > 4:
-            peaks = peaks[:4]
-        candidate_pairs = [np.asarray(pair, dtype=np.int32) for pair in itertools.combinations(peaks.tolist(), 2)]
-
-        min_peak_distance = max(
-            4.0,
-            float(row_dict.get("minor_axis_px", 0.0) or 0.0)
-            * float(cfg.detector.cellpose_overlap_split_pairlike_min_peak_distance_scale),
-        )
-        rr, cc = np.nonzero(local_mask)
-        best_score = None
-        best_labels = None
-        best_regions = []
-        for pair_arr in candidate_pairs:
-            peak_distance = float(np.linalg.norm(pair_arr[0] - pair_arr[1]))
-            if peak_distance < min_peak_distance:
-                continue
-
-            distances = []
-            for peak_row, peak_col in pair_arr:
-                distances.append((rr - int(peak_row)) ** 2 + (cc - int(peak_col)) ** 2)
-            distances = np.stack(distances, axis=1)
-            assignment = np.argmin(distances, axis=1) + 1
-
-            candidate_labels = np.zeros(local_mask.shape, dtype=np.int32)
-            candidate_labels[rr, cc] = assignment
-            candidate_regions = [
-                region
-                for region in measure.regionprops(candidate_labels)
-                if float(region.area) >= max(
-                    float(cfg.components.min_area_px),
-                    area_px * float(cfg.detector.cellpose_overlap_split_pairlike_min_child_area_ratio),
-                )
-            ]
-            if len(candidate_regions) != 2:
-                continue
-            child_areas = [float(region.area) for region in candidate_regions]
-            if min(child_areas) <= 0.0:
-                continue
-            balance = max(child_areas) / min(child_areas)
-            if balance > float(cfg.detector.cellpose_overlap_split_pairlike_max_child_area_ratio):
-                continue
-
-            peak_strength = float(min(combo[int(pr), int(pc)] for pr, pc in pair_arr))
-            score = (peak_strength, -balance, peak_distance)
-            if best_score is None or score > best_score:
-                best_score = score
-                best_labels = candidate_labels
-                best_regions = candidate_regions
-
-        if best_labels is None:
-            return None, []
-        labels = best_labels
-        regions = best_regions
-
-        pair_min_child_area_px = max(
-            float(cfg.components.min_area_px),
-            area_px * float(cfg.detector.cellpose_overlap_split_pairlike_min_child_area_ratio),
-        )
-        regions = [
-            region
-            for region in measure.regionprops(labels)
-            if float(region.area) >= pair_min_child_area_px
-        ]
-        if len(regions) != 2:
-            return None, []
-        child_areas = [float(region.area) for region in regions]
-        if min(child_areas) <= 0.0:
-            return None, []
-        if max(child_areas) / min(child_areas) > float(
-            cfg.detector.cellpose_overlap_split_pairlike_max_child_area_ratio
-        ):
-            return None, []
-        return labels, regions
-
     for _, row in components_df.iterrows():
         row_dict = row.to_dict()
         if restrict_to_dense_patch and not bool(row_dict.get("dense_patch_refined", False)):
             rows.append(row_dict)
             continue
         area_px = float(row_dict.get("area_px", 0.0) or 0.0)
-        aspect_ratio = _row_aspect_ratio(row_dict)
+        aspect_ratio = float(row_dict.get("aspect_ratio", 0.0) or 0.0)
         eccentricity = float(row_dict.get("eccentricity", 1.0) or 1.0)
 
         split_area_ratio = float(cfg.detector.cellpose_overlap_split_area_ratio)
@@ -332,11 +183,12 @@ def split_large_cellpose_instances(
         if len(valid_regions) < 2 or len(valid_regions) > cfg.detector.cellpose_overlap_split_max_children:
             valid_regions = _combo_regions(local_mask, row_dict)
             if valid_regions:
-                combo = _build_combo_map(
-                    local_mask,
-                    row_dict,
-                    brown_weight=float(cfg.detector.cellpose_overlap_split_combo_brown_weight),
-                )
+                rgb = guide_image[int(row_dict["bbox_y0"]):int(row_dict["bbox_y1"]), int(row_dict["bbox_x0"]):int(row_dict["bbox_x1"])].astype(np.float32)
+                brownness = rgb[:, :, 0] - 0.6 * rgb[:, :, 2] - 0.4 * rgb[:, :, 1]
+                brownness = _normalized(brownness, local_mask)
+                distance = _normalized(ndi.distance_transform_edt(local_mask), local_mask)
+                brown_weight = float(cfg.detector.cellpose_overlap_split_combo_brown_weight)
+                combo = ((1.0 - brown_weight) * distance + brown_weight * brownness) * local_mask.astype(np.float32)
                 combo_peaks = feature.peak_local_max(
                     combo,
                     min_distance=cfg.detector.cellpose_overlap_split_combo_peak_min_distance,
@@ -351,10 +203,6 @@ def split_large_cellpose_instances(
                     markers[peak_row, peak_col] = marker_index
                 markers, _ = ndi.label(markers > 0)
                 split_labels = segmentation.watershed(-combo, markers, mask=local_mask)
-        if len(valid_regions) < 2 or len(valid_regions) > cfg.detector.cellpose_overlap_split_max_children:
-            pair_labels, valid_regions = _pairlike_split(local_mask, row_dict)
-            if valid_regions:
-                split_labels = pair_labels
         if len(valid_regions) < 2 or len(valid_regions) > cfg.detector.cellpose_overlap_split_max_children:
             rows.append(row_dict)
             continue

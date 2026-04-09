@@ -197,24 +197,6 @@ detector:
   cellpose_overlap_split_peak_abs_threshold: 1.0
   cellpose_overlap_split_min_child_area_ratio: 0.35
   cellpose_overlap_split_max_children: 4
-  # Very small "two counted as one" cases like user-marked #57 in 10 and
-  # #31 in 74 are not area-outliers, so the large-blob split above never
-  # sees them. This pair-like pass only fires on annotated images when a
-  # slender mask has exactly two strong interior peaks in the reference view.
-  cellpose_overlap_split_pairlike_enabled: true
-  cellpose_overlap_split_pairlike_min_area_ratio: 0.78
-  cellpose_overlap_split_pairlike_max_area_ratio: 1.55
-  cellpose_overlap_split_pairlike_min_aspect_ratio: 1.85
-  cellpose_overlap_split_pairlike_max_aspect_ratio: 3.60
-  cellpose_overlap_split_pairlike_min_eccentricity: 0.82
-  cellpose_overlap_split_pairlike_max_extent: 0.72
-  cellpose_overlap_split_pairlike_peak_min_distance: 3
-  cellpose_overlap_split_pairlike_peak_abs_threshold: 0.42
-  cellpose_overlap_split_pairlike_min_peak_distance_scale: 0.55
-  cellpose_overlap_split_pairlike_min_child_area_ratio: 0.24
-  cellpose_overlap_split_pairlike_max_child_area_ratio: 3.0
-  cellpose_overlap_split_pairlike_brown_weight: 0.70
-  cellpose_overlap_split_pairlike_gaussian_sigma: 1.0
   # Dense local colonies sometimes under-split after cleaning. Re-run Cellpose
   # on the original normalized patch with a slightly smaller diameter, but only
   # if the patch is already dense and the refined patch adds a modest number of
