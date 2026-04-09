@@ -1,5 +1,45 @@
 # Project Status 2026-04-08
 
+## Follow-up Dense Patch Rescue
+
+After the earlier source-aware Cellpose pass, a new issue became clearer on
+annotated PNGs such as `22`, `25`, and `74`:
+
+- the main failure was often **local undercount in crowded regions**
+- `clean_stage1` sometimes made neighboring pupae look darker and more merged
+- switching the entire detector to the original image was not safe enough
+
+So this follow-up iteration added a **dense-patch rescue** instead of a global
+backend change.
+
+Files changed in this follow-up:
+
+- `/Users/stephenyu/Documents/New project/src/pupa_counter/detect/cellpose_backend.py`
+- `/Users/stephenyu/Documents/New project/src/pupa_counter/detect/cellpose_dense_patch.py`
+- `/Users/stephenyu/Documents/New project/src/pupa_counter/pipeline.py`
+- `/Users/stephenyu/Documents/New project/src/pupa_counter/detect/cellpose_postprocess.py`
+- `/Users/stephenyu/Documents/New project/src/pupa_counter/config.py`
+- `/Users/stephenyu/Documents/New project/configs/base.yaml`
+- `/Users/stephenyu/Documents/New project/tests/test_cellpose_dense_patch.py`
+
+What changed:
+
+- the primary full-image Cellpose pass still runs on `clean_stage1`
+- only dense `annotated_png` regions are selected for a second local pass
+- that second pass reruns Cellpose on the `normalized` image patch, not the
+  cleaned patch
+- replacement is gated tightly, so only modest and plausible gains are accepted
+- accepted rescue detections are tagged as `cellpose_dense_patch` in
+  `candidate_table.csv`
+
+Why this shape:
+
+- full-image `clean -> normalized` switching did not produce a reliable win
+- local dense rescue improved recall without destabilizing the calmer parts of
+  the sheet
+- this matches the observed human failure mode better: a few crowded clusters
+  are the real problem, not the whole image
+
 ## This Iteration
 
 This pass added a **source-aware postprocess** on top of the Cellpose backend.
@@ -119,6 +159,58 @@ What is still open:
 - a newly confirmed review risk: `clean_stage1` can sometimes darken or merge
   touching pupae relative to the original image, so clean artifacts must be
   checked alongside the source image during QA
+
+### Dense rescue check on the 15-image annotated review subset
+
+Run root:
+
+- `/Users/stephenyu/Documents/New project/data/processed/annotated_bulk_review_eval_2026-04-08_v2/baseline_v1`
+
+Key count deltas versus the earlier review batch:
+
+- `scan_20260313_22_74a4d07f84`: `119 -> 128`
+- `scan_20260313_25_db0b949a97`: `114 -> 118`
+- `scan_20260313_74_f670a25628`: `103 -> 112`
+- `scan_20260313_7_78157780df`: `106 -> 107`
+
+Interpretation:
+
+- the new pass is behaving like a **recall supplement**, not a global rewrite
+- several dense annotated cases now recover extra instances
+- the gain is strongest on `22`, `25`, and `74`, which were repeatedly called
+  out during visual review
+- this still needs human QA, because some crowded regions may now be closer to
+  correct while others may have become slightly too aggressive
+
+Automated test status after this follow-up:
+
+- `27 passed`
+
+## Added 5 Percent Count
+
+Based on the latest feedback, the pipeline now also reports a **top 5% count**
+derived from the same top-to-bottom anchor span that already defines the
+25% / 75% middle band.
+
+What this means in practice:
+
+- `upper_five_pct_y = top_y + 0.05 * (bottom_y - top_y)`
+- any accepted instance with centroid at or above that line contributes to
+  `n_top_5pct`
+- the existing `top / middle / bottom` buckets are unchanged
+
+Where it appears:
+
+- `counts.csv` now includes `n_top_5pct`
+- `counts.csv` now includes `upper_five_pct_y`
+- overlays show a gold `5%` guide line
+- overlays show `top5%=...` in the stats box
+
+This is intentionally additive:
+
+- it does not change how the main middle-band count is computed
+- it gives Sarah one extra, narrower top-of-span statistic without breaking
+  any of the existing output columns that downstream scripts already use
 
 ## Best Next Steps
 

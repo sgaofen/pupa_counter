@@ -7,8 +7,8 @@ It implements the counting rule used in this project:
 1. detect final pupa instances
 2. find the top-most and bottom-most accepted pupa
 3. use that span as the canonical height
-4. draw the 25% and 75% band lines
-5. report `top`, `middle`, `bottom`, and `n_pupa_final`
+4. draw the 5%, 25%, and 75% guide lines
+5. report `n_top_5pct`, `top`, `middle`, `bottom`, and `n_pupa_final`
 
 The current best default is a `Cellpose`-first detector with source-aware cleanup for annotated PNGs and clean scans.
 
@@ -38,6 +38,7 @@ What is solid right now:
 - the `Cellpose` backend is currently the strongest default choice
 - review artifacts are detailed enough to debug per-image failures
 - overlays now number the accepted `middle`-band detections in green, which makes human QA easier
+- outputs now also include a `top 5%` count derived from the same top-to-bottom anchor span
 - the clean-scan truth subset improved to `MAE = 6.00` in the latest iteration
 
 What is still open:
@@ -47,6 +48,12 @@ What is still open:
 - one important failure mode is that `clean_stage1` can sometimes darken or visually merge touching pupae, which may make a tight cluster harder to separate downstream
 
 That last point is important: if a result looks suspicious, always inspect the saved `*_clean_stage1.png` together with the overlay.
+
+The current code does **not** blindly switch the whole detector to the original image. Instead it uses a hybrid rule:
+
+- the main full-image pass still runs on the cleaned image, because that suppresses blue annotations well
+- only dense annotated patches are re-checked on the normalized/original-looking image
+- that dense-patch rescue exists specifically to recover touching pupae that became too merged after cleaning
 
 ## Repository Layout
 
@@ -135,7 +142,7 @@ The end-to-end flow in `src/pupa_counter/pipeline.py` is:
 8. compute component features
 9. postprocess detections
 10. pick final accepted instances
-11. derive top/bottom anchors and 25% / 75% lines
+11. derive top/bottom anchors and 5% / 25% / 75% lines
 12. assign `top / middle / bottom`
 13. write overlays, tables, review flags, and reports
 
@@ -148,6 +155,9 @@ The end-to-end flow in `src/pupa_counter/pipeline.py` is:
 - uses `src/pupa_counter/detect/cellpose_backend.py`
 - includes a conservative second-pass split for a small number of large,
   blob-like Cellpose masks that likely contain two touching pupae
+- includes a dense-patch rescue pass in `src/pupa_counter/detect/cellpose_dense_patch.py`
+  that re-runs Cellpose on the normalized image for only the most crowded
+  annotated regions
 - then runs source-aware cleanup in `src/pupa_counter/detect/cellpose_postprocess.py`
 
 `classical`:
@@ -196,6 +206,7 @@ Overlay convention:
 - orange contour = `top`
 - green contour = `middle`
 - red contour = `bottom`
+- gold horizontal line = the `5%` guide line
 - small green numbers = the accepted `middle` instances, ordered top-to-bottom then left-to-right
 
 During long runs, partial progress is also written:

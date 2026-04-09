@@ -12,6 +12,7 @@ def assign_bands(instances_df: pd.DataFrame, geometry: BandGeometry) -> pd.DataF
         return instances_df.copy()
     frame = instances_df.copy()
     positions = frame["centroid_y"].astype(float)
+    frame["is_top_5pct"] = positions <= float(geometry.upper_five_pct_y)
     frame["band"] = "middle"
     frame.loc[positions < geometry.upper_middle_y, "band"] = "top"
     frame.loc[positions > geometry.lower_middle_y, "band"] = "bottom"

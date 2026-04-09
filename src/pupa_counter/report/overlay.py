@@ -66,7 +66,12 @@ def build_overlay(
     candidate_df: pd.DataFrame = None,
 ) -> np.ndarray:
     overlay = image.copy()
+    n_top_5pct = 0
     if instances_df is not None and not instances_df.empty:
+        if "is_top_5pct" in instances_df.columns:
+            n_top_5pct = int(instances_df["is_top_5pct"].astype(bool).sum())
+        elif geometry is not None:
+            n_top_5pct = int((instances_df["centroid_y"].astype(float) <= float(geometry.upper_five_pct_y)).sum())
         middle_labels = {}
         middle_df = instances_df.loc[
             ~instances_df.get("synthetic_instance", pd.Series(False, index=instances_df.index)).astype(bool)
@@ -118,12 +123,30 @@ def build_overlay(
 
     if geometry is not None:
         width = overlay.shape[1]
+        cv2.line(
+            overlay,
+            (0, int(round(geometry.upper_five_pct_y))),
+            (width, int(round(geometry.upper_five_pct_y))),
+            (255, 215, 0),
+            2,
+        )
         cv2.line(overlay, (0, int(round(geometry.upper_middle_y))), (width, int(round(geometry.upper_middle_y))), (0, 180, 255), 3)
         cv2.line(overlay, (0, int(round(geometry.lower_middle_y))), (width, int(round(geometry.lower_middle_y))), (0, 180, 255), 3)
         cv2.line(overlay, (0, int(round(geometry.top_y))), (width, int(round(geometry.top_y))), (255, 0, 255), 1)
         cv2.line(overlay, (0, int(round(geometry.bottom_y))), (width, int(round(geometry.bottom_y))), (255, 0, 255), 1)
+        cv2.putText(
+            overlay,
+            "5%",
+            (12, max(20, int(round(geometry.upper_five_pct_y)) - 6)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 215, 0),
+            2,
+            cv2.LINE_AA,
+        )
 
-    counts_text = "top=%s middle=%s bottom=%s total=%s" % (
+    counts_text = "top5%%=%s top=%s middle=%s bottom=%s total=%s" % (
+        n_top_5pct,
         int((instances_df["band"] == "top").sum()) if instances_df is not None and "band" in instances_df.columns else 0,
         int((instances_df["band"] == "middle").sum()) if instances_df is not None and "band" in instances_df.columns else 0,
         int((instances_df["band"] == "bottom").sum()) if instances_df is not None and "band" in instances_df.columns else 0,

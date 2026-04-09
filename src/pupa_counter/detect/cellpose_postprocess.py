@@ -94,10 +94,11 @@ def calibrate_cellpose_detections(
     frame["cluster_unresolved"] = False
     frame["cluster_area_threshold"] = 0.0
     parent_ids = frame["parent_component_id"] if "parent_component_id" in frame.columns else pd.Series([None] * len(frame))
+    dense_patch_refined = frame["dense_patch_refined"] if "dense_patch_refined" in frame.columns else pd.Series([False] * len(frame))
     detector_source = np.where(
         parent_ids.notna(),
         "cellpose_split",
-        "cellpose",
+        np.where(dense_patch_refined.astype(bool), "cellpose_dense_patch", "cellpose"),
     )
     frame["detector_source"] = detector_source
     return frame

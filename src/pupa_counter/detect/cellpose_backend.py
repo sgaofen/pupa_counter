@@ -71,7 +71,19 @@ def _maybe_downscale(image: np.ndarray, max_side_px: int):
     return cv2.resize(image, new_size, interpolation=cv2.INTER_AREA), scale
 
 
-def detect_instances(image: np.ndarray, cfg: AppConfig) -> pd.DataFrame:
+def detect_instances(
+    image: np.ndarray,
+    cfg: AppConfig,
+    *,
+    diameter: Optional[float] = None,
+    max_side_px: Optional[int] = None,
+    flow_threshold: Optional[float] = None,
+    cellprob_threshold: Optional[float] = None,
+    component_prefix: str = "cp",
+    offset_row: int = 0,
+    offset_col: int = 0,
+    global_image_shape = None,
+) -> pd.DataFrame:
     """Run cellpose and return a components-shaped dataframe.
 
     The output schema matches what ``extract_components`` produces, so the
@@ -80,19 +92,22 @@ def detect_instances(image: np.ndarray, cfg: AppConfig) -> pd.DataFrame:
     """
     cellpose_cfg = cfg.detector
     image_rgb = image
-    resized, scale = _maybe_downscale(image_rgb, cellpose_cfg.cellpose_max_side_px)
+    resized, scale = _maybe_downscale(image_rgb, max_side_px or cellpose_cfg.cellpose_max_side_px)
 
-    diameter = cellpose_cfg.cellpose_diameter
+    diameter = cellpose_cfg.cellpose_diameter if diameter is None else diameter
     if diameter is None or diameter <= 0:
         diameter = None  # let cellpose auto-estimate
+
+    flow_threshold = cellpose_cfg.cellpose_flow_threshold if flow_threshold is None else flow_threshold
+    cellprob_threshold = cellpose_cfg.cellpose_cellprob_threshold if cellprob_threshold is None else cellprob_threshold
 
     model = _get_model()
     masks, _flows, _styles, _diams = model.eval(
         resized,
         diameter=diameter,
         channels=[0, 0],  # grayscale single-channel mode (R only)
-        flow_threshold=cellpose_cfg.cellpose_flow_threshold,
-        cellprob_threshold=cellpose_cfg.cellpose_cellprob_threshold,
+        flow_threshold=flow_threshold,
+        cellprob_threshold=cellprob_threshold,
     )
 
     # masks is a 2-D int array where each integer label > 0 is one instance.
@@ -110,6 +125,7 @@ def detect_instances(image: np.ndarray, cfg: AppConfig) -> pd.DataFrame:
         )
 
     rows: List[dict] = []
+    full_shape = image_rgb.shape[:2] if global_image_shape is None else global_image_shape
     for instance_id in range(1, n_instances + 1):
         local_mask = masks == instance_id
         if not local_mask.any():
@@ -118,19 +134,19 @@ def detect_instances(image: np.ndarray, cfg: AppConfig) -> pd.DataFrame:
         min_row, max_row = int(ys.min()), int(ys.max() + 1)
         min_col, max_col = int(xs.min()), int(xs.max() + 1)
         cropped = local_mask[min_row:max_row, min_col:max_col]
-        component_id = "cp_%05d" % instance_id
+        component_id = "%s_%05d" % (component_prefix, instance_id)
         try:
             row = build_component_row(
                 cropped,
-                offset_row=min_row,
-                offset_col=min_col,
-                image_shape=image_rgb.shape[:2],
+                offset_row=offset_row + min_row,
+                offset_col=offset_col + min_col,
+                image_shape=full_shape,
                 component_id=component_id,
             )
         except ValueError:
             continue
-        row["image_height"] = int(image_rgb.shape[0])
-        row["image_width"] = int(image_rgb.shape[1])
+        row["image_height"] = int(full_shape[0])
+        row["image_width"] = int(full_shape[1])
         rows.append(row)
 
     if not rows:

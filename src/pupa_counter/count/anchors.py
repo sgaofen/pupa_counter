@@ -21,11 +21,13 @@ def compute_band_geometry(instances_df: pd.DataFrame, anchor_mode: str = "centro
     top_y = float(top_series.min())
     bottom_y = float(bottom_series.max())
     span = bottom_y - top_y
+    upper_five_pct_y = top_y + 0.05 * span
     upper_middle_y = top_y + 0.25 * span
     lower_middle_y = top_y + 0.75 * span
     return BandGeometry(
         top_y=top_y,
         bottom_y=bottom_y,
+        upper_five_pct_y=float(upper_five_pct_y),
         upper_middle_y=float(upper_middle_y),
         lower_middle_y=float(lower_middle_y),
         anchor_mode=anchor_mode,

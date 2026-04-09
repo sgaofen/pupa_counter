@@ -36,6 +36,7 @@ class ImageRecord:
 class BandGeometry:
     top_y: float
     bottom_y: float
+    upper_five_pct_y: float
     upper_middle_y: float
     lower_middle_y: float
     anchor_mode: AnchorMode = "centroid"
@@ -61,11 +62,13 @@ class CountSummary:
     split: str
     n_candidates_raw: int
     n_pupa_final: int
+    n_top_5pct: int
     n_top: int
     n_middle: int
     n_bottom: int
     top_y: Optional[float]
     bottom_y: Optional[float]
+    upper_five_pct_y: Optional[float]
     upper_middle_y: Optional[float]
     lower_middle_y: Optional[float]
     mean_confidence: Optional[float]

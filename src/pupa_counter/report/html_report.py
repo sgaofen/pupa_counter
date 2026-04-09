@@ -22,6 +22,8 @@ def build_run_report(
     lines.append("- Images processed: %s" % len(counts_df))
     lines.append("- Images needing review: %s" % int(review_df.shape[0]))
     if not counts_df.empty:
+        if "n_top_5pct" in counts_df.columns:
+            lines.append("- Mean top 5%% count: %.2f" % counts_df["n_top_5pct"].mean())
         lines.append("- Mean middle count: %.2f" % counts_df["n_middle"].mean())
         lines.append("- Mean total count: %.2f" % counts_df["n_pupa_final"].mean())
     if metrics:

@@ -61,6 +61,12 @@ def summarize_counts(
     n_top = int((instances_df["band"] == "top").sum()) if "band" in instances_df.columns else 0
     n_middle = int((instances_df["band"] == "middle").sum()) if "band" in instances_df.columns else 0
     n_bottom = int((instances_df["band"] == "bottom").sum()) if "band" in instances_df.columns else 0
+    if "is_top_5pct" in instances_df.columns:
+        n_top_5pct = int(instances_df["is_top_5pct"].astype(bool).sum())
+    elif geometry is not None and not instances_df.empty:
+        n_top_5pct = int((instances_df["centroid_y"].astype(float) <= float(geometry.upper_five_pct_y)).sum())
+    else:
+        n_top_5pct = 0
     mean_confidence = None if instances_df.empty else float(instances_df["confidence"].mean())
 
     return CountSummary(
@@ -69,11 +75,13 @@ def summarize_counts(
         split=record.split,
         n_candidates_raw=int(candidate_df.loc[candidate_df["is_active"].astype(bool)].shape[0]) if not candidate_df.empty else 0,
         n_pupa_final=int(len(instances_df)),
+        n_top_5pct=n_top_5pct,
         n_top=n_top,
         n_middle=n_middle,
         n_bottom=n_bottom,
         top_y=None if geometry is None else geometry.top_y,
         bottom_y=None if geometry is None else geometry.bottom_y,
+        upper_five_pct_y=None if geometry is None else geometry.upper_five_pct_y,
         upper_middle_y=None if geometry is None else geometry.upper_middle_y,
         lower_middle_y=None if geometry is None else geometry.lower_middle_y,
         mean_confidence=mean_confidence,
