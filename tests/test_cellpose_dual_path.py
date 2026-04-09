@@ -212,7 +212,7 @@ def test_pair_rescue_skips_regions_with_multiple_primary_matches():
     assert not merged.get("pair_rescue_selected", pd.Series([], dtype=bool)).fillna(False).astype(bool).any()
 
 
-def test_pair_rescue_skips_groups_without_primary_match():
+def test_pair_rescue_can_add_strong_group_without_primary_match_when_on_paper():
     shape = (140, 140)
     primary_df = pd.DataFrame(
         [
@@ -237,7 +237,50 @@ def test_pair_rescue_skips_groups_without_primary_match():
     cfg.detector.cellpose_annotated_pair_rescue_min_children = 2
     cfg.detector.cellpose_annotated_pair_rescue_max_children = 3
 
-    merged = merge_annotated_pair_rescue(primary_df, classical_df, image_shape=shape, cfg=cfg)
+    merged = merge_annotated_pair_rescue(
+        primary_df,
+        classical_df,
+        image_shape=shape,
+        cfg=cfg,
+        paper_bounds=(10, 0, 140, 140),
+    )
+
+    assert len(merged) == len(primary_df) + 2
+    assert int(merged["pair_rescue_selected"].astype(bool).sum()) == 2
+
+
+def test_pair_rescue_skips_groups_without_primary_match_if_outside_paper():
+    shape = (140, 140)
+    primary_df = pd.DataFrame(
+        [
+            _build_row(_ellipse_mask(shape, 30, 30), "cp_00001"),
+        ]
+    )
+    classical_df = pd.DataFrame(
+        [
+            dict(
+                _build_row(_ellipse_mask(shape, 90, 6), "cc_00001_child_01", detector_source="classical"),
+                split_from_cluster=True,
+                parent_component_id="cc_00001",
+            ),
+            dict(
+                _build_row(_ellipse_mask(shape, 90, 18), "cc_00001_child_02", detector_source="classical"),
+                split_from_cluster=True,
+                parent_component_id="cc_00001",
+            ),
+        ]
+    )
+    cfg = AppConfig()
+    cfg.detector.cellpose_annotated_pair_rescue_min_children = 2
+    cfg.detector.cellpose_annotated_pair_rescue_max_children = 3
+
+    merged = merge_annotated_pair_rescue(
+        primary_df,
+        classical_df,
+        image_shape=shape,
+        cfg=cfg,
+        paper_bounds=(20, 0, 140, 140),
+    )
 
     assert len(merged) == len(primary_df)
     assert not merged.get("pair_rescue_selected", pd.Series([], dtype=bool)).fillna(False).astype(bool).any()

@@ -22,6 +22,7 @@ from pupa_counter.detect.cellpose_postprocess import (
     build_annotated_png_supplement,
     build_clean_png_supplement,
     calibrate_cellpose_detections,
+    prune_annotated_false_positives,
 )
 from pupa_counter.detect.cellpose_dense_patch import refine_dense_cellpose_patches
 from pupa_counter.detect.cellpose_split import split_large_cellpose_instances
@@ -44,6 +45,7 @@ from pupa_counter.preprocess.blue_mask import detect_blue_annotations
 from pupa_counter.preprocess.crop import crop_scanner_border
 from pupa_counter.preprocess.inpaint import remove_or_ignore_blue
 from pupa_counter.preprocess.normalize import build_reference_view, normalize_background
+from pupa_counter.preprocess.paper_region import estimate_paper_bounds
 from pupa_counter.report.html_report import build_run_report
 from pupa_counter.report.overlay import build_overlay
 from pupa_counter.report.review_queue import build_review_flags, build_review_queue_frame
@@ -157,6 +159,7 @@ def run_pipeline(
         blue_mask = detect_blue_annotations(normalized, cfg)
         blue_components_df = extract_blue_components(blue_mask, normalized.shape)
         blue_supervision = summarize_blue_supervision(blue_components_df, blue_mask, normalized.shape)
+        paper_bounds = estimate_paper_bounds(cropped, blue_mask=blue_mask, cfg=cfg)
         cleaned = remove_or_ignore_blue(normalized, blue_mask, cfg)
         reference_cleaned = remove_or_ignore_blue(reference_view, blue_mask, cfg)
 
@@ -188,21 +191,39 @@ def run_pipeline(
                 )
 
             brown_mask = np.zeros(cleaned.shape[:2], dtype=np.uint8)
-            components_df = cellpose_detect(cleaned, cfg)
+            if record.source_type == "annotated_png":
+                primary_detection_image = reference_cleaned
+                primary_feature_image = reference_cleaned
+            else:
+                primary_detection_image = cleaned
+                primary_feature_image = cleaned
+            dense_refine_image = reference_cleaned if record.source_type == "annotated_png" else cleaned
+            components_df = cellpose_detect(primary_detection_image, cfg)
             if not components_df.empty:
                 components_df = split_large_cellpose_instances(
                     components_df,
-                    cleaned.shape[:2],
+                    primary_detection_image.shape[:2],
                     source_type=record.source_type,
                     cfg=cfg,
                 )
                 components_df = refine_dense_cellpose_patches(
-                    reference_cleaned,
+                    dense_refine_image,
                     components_df,
                     source_type=record.source_type,
                     cfg=cfg,
                 )
-            features_df = featurize_components(cleaned, blue_mask, components_df) if not components_df.empty else components_df.copy()
+                components_df = split_large_cellpose_instances(
+                    components_df,
+                    primary_detection_image.shape[:2],
+                    source_type=record.source_type,
+                    cfg=cfg,
+                    restrict_to_dense_patch=True,
+                )
+            features_df = (
+                featurize_components(primary_feature_image, blue_mask, components_df)
+                if not components_df.empty
+                else components_df.copy()
+            )
             labeled_df = calibrate_cellpose_detections(features_df, source_type=record.source_type, cfg=cfg) if not features_df.empty else features_df.copy()
 
             if record.source_type == "annotated_png" and cfg.detector.cellpose_annotated_dual_path_enabled:
@@ -214,30 +235,17 @@ def run_pipeline(
                         * cfg.detector.cellpose_annotated_dual_path_diameter_scale,
                     )
                 normalized_labeled_df = _run_annotated_alt_path(
-                    normalized,
-                    feature_image=normalized,
+                    cleaned,
+                    feature_image=cleaned,
                     component_prefix="npn",
                 )
                 if not normalized_labeled_df.empty:
                     labeled_df = merge_annotated_detection_paths(
                         labeled_df,
                         normalized_labeled_df,
-                        image_shape=normalized.shape[:2],
+                        image_shape=cleaned.shape[:2],
                         cfg=cfg,
                     )
-                reference_labeled_df = _run_annotated_alt_path(
-                    reference_cleaned,
-                    feature_image=reference_cleaned,
-                    component_prefix="npr",
-                )
-                if not reference_labeled_df.empty:
-                    labeled_df = merge_annotated_detection_paths(
-                        labeled_df,
-                        reference_labeled_df,
-                        image_shape=reference_cleaned.shape[:2],
-                        cfg=cfg,
-                    )
-
             if record.source_type == "annotated_png" and cfg.detector.cellpose_annotated_pair_rescue_enabled:
                 brown_mask = detect_brown_candidates(reference_view, blue_mask=blue_mask, cfg=cfg)
                 classical_components_df = extract_components(brown_mask, cfg)
@@ -261,15 +269,23 @@ def run_pipeline(
                     classical_split_df,
                     image_shape=reference_view.shape[:2],
                     cfg=cfg,
+                    paper_bounds=paper_bounds,
                 )
                 supplement_df = build_annotated_png_supplement(
                     labeled_df,
                     classical_split_df,
                     source_type=record.source_type,
                     cfg=cfg,
+                    paper_bounds=paper_bounds,
                 )
                 if not supplement_df.empty:
                     labeled_df = pd.concat([labeled_df, supplement_df], ignore_index=True)
+                labeled_df = prune_annotated_false_positives(
+                    labeled_df,
+                    source_type=record.source_type,
+                    cfg=cfg,
+                    paper_bounds=paper_bounds,
+                )
 
             if record.source_type == "clean_png" and cfg.detector.clean_png_supplement_enabled:
                 brown_mask = detect_brown_candidates(cleaned, blue_mask=blue_mask, cfg=cfg)
@@ -391,14 +407,21 @@ def run_pipeline(
 
         if cfg.output.save_intermediate_masks:
             save_image(run_dirs["intermediate"] / ("%s_stage0.png" % record.image_id), normalized)
+            save_image(run_dirs["intermediate"] / ("%s_original_stage0.png" % record.image_id), cropped)
             save_image(run_dirs["intermediate"] / ("%s_reference_stage0.png" % record.image_id), reference_view)
-            save_image(run_dirs["intermediate"] / ("%s_normalized_stage0.png" % record.image_id), reference_view)
+            save_image(run_dirs["intermediate"] / ("%s_normalized_stage0.png" % record.image_id), normalized)
             save_mask(run_dirs["intermediate"] / ("%s_blue_mask.png" % record.image_id), blue_mask)
-            save_image(run_dirs["intermediate"] / ("%s_clean_stage1.png" % record.image_id), cleaned)
+            save_image(
+                run_dirs["intermediate"] / ("%s_clean_stage1.png" % record.image_id),
+                reference_cleaned if record.source_type == "annotated_png" else cleaned,
+            )
+            if record.source_type == "annotated_png":
+                save_image(run_dirs["intermediate"] / ("%s_normalized_clean_stage1.png" % record.image_id), cleaned)
             save_mask(run_dirs["intermediate"] / ("%s_brown_mask.png" % record.image_id), brown_mask)
 
         if cfg.output.save_overlays:
-            overlay = build_overlay(normalized, count_instances, geometry, flags=flags, candidate_df=classified_df)
+            overlay_base = reference_view if record.source_type == "annotated_png" else normalized
+            overlay = build_overlay(overlay_base, count_instances, geometry, flags=flags, candidate_df=classified_df)
             save_image(run_dirs["overlays"] / ("%s.png" % record.image_id), overlay)
 
         if cfg.output.save_candidate_table and not classified_df.empty:

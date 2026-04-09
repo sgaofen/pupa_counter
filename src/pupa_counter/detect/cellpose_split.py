@@ -28,6 +28,7 @@ def split_large_cellpose_instances(
     *,
     source_type: str,
     cfg: AppConfig,
+    restrict_to_dense_patch: bool = False,
 ) -> pd.DataFrame:
     if components_df.empty or not cfg.detector.cellpose_overlap_split_enabled:
         return components_df.copy()
@@ -47,11 +48,18 @@ def split_large_cellpose_instances(
 
     for _, row in components_df.iterrows():
         row_dict = row.to_dict()
+        if restrict_to_dense_patch and not bool(row_dict.get("dense_patch_refined", False)):
+            rows.append(row_dict)
+            continue
         area_px = float(row_dict.get("area_px", 0.0) or 0.0)
         aspect_ratio = float(row_dict.get("aspect_ratio", 0.0) or 0.0)
         eccentricity = float(row_dict.get("eccentricity", 1.0) or 1.0)
 
-        area_gate = area_px >= median_area * cfg.detector.cellpose_overlap_split_area_ratio
+        split_area_ratio = float(cfg.detector.cellpose_overlap_split_area_ratio)
+        if source_type == "annotated_png":
+            split_area_ratio = min(split_area_ratio, 1.45)
+
+        area_gate = area_px >= median_area * split_area_ratio
         if source_type == "annotated_png" and cfg.detector.cellpose_overlap_split_annotated_ignore_shape:
             eligible = area_gate
         else:

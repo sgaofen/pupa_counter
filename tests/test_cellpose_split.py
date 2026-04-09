@@ -86,3 +86,35 @@ def test_cellpose_split_allows_elongated_annotated_touching_pair():
     active = split.loc[split["is_active"].astype(bool)]
     assert len(active) == 3
     assert int(split["parent_component_id"].notna().sum()) == 2
+
+
+def test_cellpose_split_can_restrict_to_dense_patch_components_only():
+    merged = np.zeros((60, 60), dtype=bool)
+    rr, cc = np.ogrid[:60, :60]
+    left = ((rr - 30) ** 2) / (7**2) + ((cc - 18) ** 2) / (5**2) <= 1.0
+    right = ((rr - 30) ** 2) / (7**2) + ((cc - 40) ** 2) / (5**2) <= 1.0
+    bridge = (rr == 30) & (cc >= 23) & (cc <= 35)
+    merged[left | right | bridge] = True
+
+    other = np.zeros((60, 60), dtype=bool)
+    other[12:28, 10:22] = True
+
+    frame = _components_from_masks([merged, other])
+    frame.loc[0, "dense_patch_refined"] = True
+    frame.loc[1, "dense_patch_refined"] = False
+
+    cfg = AppConfig()
+    cfg.detector.cellpose_overlap_split_area_ratio = 1.0
+    cfg.detector.cellpose_overlap_split_peak_min_distance = 2
+
+    split = split_large_cellpose_instances(
+        frame,
+        merged.shape,
+        source_type="annotated_png",
+        cfg=cfg,
+        restrict_to_dense_patch=True,
+    )
+
+    active = split.loc[split["is_active"].astype(bool)]
+    assert len(active) == 3
+    assert "cp_00002" in active["component_id"].tolist()

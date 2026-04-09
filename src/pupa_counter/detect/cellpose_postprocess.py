@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from pupa_counter.config import AppConfig
+from pupa_counter.preprocess.paper_region import bbox_fraction_inside_paper_bounds, centroid_inside_paper_bounds
 
 
 def _clip01(value: float) -> float:
@@ -49,6 +50,7 @@ def calibrate_cellpose_detections(
     clean_source = source_type in {"clean_png", "clean_pdf"}
 
     for _, row in frame.iterrows():
+        area_px = float(row["area_px"])
         solidity = float(row["solidity"])
         eccentricity = float(row["eccentricity"])
         aspect_ratio = float(row["aspect_ratio"])
@@ -56,7 +58,6 @@ def calibrate_cellpose_detections(
         local_contrast = float(row["local_contrast"])
         mean_s = float(row["mean_s"])
         mean_v = float(row["mean_v"])
-
         shape_score = np.mean(
             [
                 _clip01((aspect_ratio - 1.15) / 1.2),
@@ -77,6 +78,9 @@ def calibrate_cellpose_detections(
         confidence = max(raw_confidence, 0.58 if clean_source else 0.72)
         label = "pupa"
 
+        if mean_v > 235.0 and color_score < 0.15:
+            label = "artifact"
+            confidence = max(confidence, 0.70)
         if clean_source and (
             (mean_v > cfg.detector.clean_filter_max_mean_v)
             and (color_score < cfg.detector.clean_filter_max_color_score)
@@ -101,6 +105,106 @@ def calibrate_cellpose_detections(
         np.where(dense_patch_refined.astype(bool), "cellpose_dense_patch", "cellpose"),
     )
     frame["detector_source"] = detector_source
+    return frame
+
+
+def prune_annotated_false_positives(
+    candidate_df: pd.DataFrame,
+    *,
+    source_type: str,
+    cfg: AppConfig,
+    paper_bounds=None,
+) -> pd.DataFrame:
+    """Remove obvious annotated-sheet false positives after recall rescue.
+
+    We intentionally run this *after* the dense-patch / dual-path / pair-rescue
+    logic. Those stages benefit from permissive seeds; applying the same
+    artifact rules too early suppresses the very crowded regions we are trying
+    to recover. Here we only demote candidates that look decisively wrong:
+
+    - blue-dot / blue-line remnants,
+    - tiny edge slivers hugging the image border,
+    - very bright low-color paper marks,
+    - classical add-on fragments still touching the page edge.
+    """
+    if candidate_df.empty or source_type != "annotated_png":
+        return candidate_df.copy()
+
+    frame = candidate_df.copy()
+    is_pupa = frame["label"].isin(["pupa"]) & frame["is_active"].astype(bool)
+    blue_overlap = frame["blue_overlap_ratio"].fillna(0.0).astype(float)
+    mean_v = frame["mean_v"].fillna(255.0).astype(float)
+    color_score = frame["color_score"].fillna(0.0).astype(float)
+    local_contrast = frame["local_contrast"].fillna(0.0).astype(float)
+    area_px = frame["area_px"].fillna(0.0).astype(float)
+    border_touch_ratio = frame["border_touch_ratio"].fillna(0.0).astype(float)
+    touches_image_border = frame["touches_image_border"].fillna(False).astype(bool)
+    detector_source = frame["detector_source"].fillna("").astype(str)
+    centroid_inside = frame.apply(
+        lambda row: centroid_inside_paper_bounds(
+            row.get("centroid_x", 0.0),
+            row.get("centroid_y", 0.0),
+            paper_bounds,
+        ),
+        axis=1,
+    )
+    bbox_inside_fraction = frame.apply(
+        lambda row: bbox_fraction_inside_paper_bounds(
+            row.get("bbox_x0", 0.0),
+            row.get("bbox_y0", 0.0),
+            row.get("bbox_x1", 0.0),
+            row.get("bbox_y1", 0.0),
+            paper_bounds,
+        ),
+        axis=1,
+    )
+
+    blue_artifact = is_pupa & (
+        (blue_overlap >= 0.18)
+        | (
+            (blue_overlap >= 0.10)
+            & (
+                (mean_v >= 170.0)
+                | (color_score <= 0.20)
+                | (local_contrast <= 20.0)
+                | (area_px <= 220.0)
+            )
+        )
+    )
+    outside_paper_artifact = is_pupa & (
+        ~centroid_inside.astype(bool)
+        | (bbox_inside_fraction.astype(float) < 0.50)
+        | (
+            touches_image_border
+            & (bbox_inside_fraction.astype(float) < cfg.preprocess.paper_min_bbox_inside_fraction)
+        )
+    )
+    border_artifact = is_pupa & touches_image_border & (
+        (~centroid_inside.astype(bool))
+        | (bbox_inside_fraction.astype(float) < cfg.preprocess.paper_min_bbox_inside_fraction)
+    ) & (
+        (detector_source == "annotated_classical_addon")
+        | ((border_touch_ratio >= 0.55) & (area_px <= 180.0))
+    )
+    bright_artifact = is_pupa & (mean_v >= 235.0) & (color_score <= 0.15)
+    stain_artifact = (
+        is_pupa
+        & centroid_inside.astype(bool)
+        & (area_px <= 220.0)
+        & (mean_v >= 150.0)
+        & (color_score <= 0.22)
+        & (local_contrast <= 18.0)
+    )
+
+    artifact_mask = blue_artifact | outside_paper_artifact | border_artifact | bright_artifact | stain_artifact
+    if not artifact_mask.any():
+        return frame
+
+    frame.loc[artifact_mask, "label"] = "artifact"
+    frame.loc[artifact_mask, "confidence"] = np.maximum(
+        frame.loc[artifact_mask, "confidence"].astype(float),
+        0.70,
+    )
     return frame
 
 
@@ -202,6 +306,7 @@ def build_annotated_png_supplement(
     *,
     source_type: str,
     cfg: AppConfig,
+    paper_bounds=None,
 ) -> pd.DataFrame:
     """Add a small number of strong classical-only candidates on annotated PNGs.
 
@@ -257,6 +362,28 @@ def build_annotated_png_supplement(
             <= cfg.detector.cellpose_annotated_png_supplement_max_border_touch_ratio
         )
     )
+    if "touches_image_border" in unmatched.columns:
+        keep_mask &= ~unmatched["touches_image_border"].fillna(False).astype(bool)
+    if paper_bounds is not None:
+        left, top, right, bottom = paper_bounds
+        centroid_inside = (
+            (unmatched["centroid_x"].astype(float) >= left)
+            & (unmatched["centroid_x"].astype(float) <= right)
+            & (unmatched["centroid_y"].astype(float) >= top)
+            & (unmatched["centroid_y"].astype(float) <= bottom)
+        )
+        bbox_inside_fraction = unmatched.apply(
+            lambda row: bbox_fraction_inside_paper_bounds(
+                row.get("bbox_x0", 0.0),
+                row.get("bbox_y0", 0.0),
+                row.get("bbox_x1", 0.0),
+                row.get("bbox_y1", 0.0),
+                paper_bounds,
+            ),
+            axis=1,
+        )
+        keep_mask &= centroid_inside
+        keep_mask &= bbox_inside_fraction.astype(float) >= cfg.preprocess.paper_min_bbox_inside_fraction
     supplement = unmatched.loc[keep_mask].copy()
     if supplement.empty:
         return supplement

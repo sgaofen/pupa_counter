@@ -14,8 +14,8 @@ def build_reference_view(image: np.ndarray, cfg: AppConfig = None) -> np.ndarray
     The main normalized view intentionally boosts local contrast to help the
     primary detector, but that same boost can visually thicken touching pupae
     until narrow gaps disappear. The reference view stays much closer to the
-    original crop and only applies a very gentle white balancing so the
-    background remains near-white without darkening the pupae themselves.
+    original crop and only applies a very gentle white balancing so rescue
+    paths can preserve narrow gaps without darkening the pupae themselves.
     """
     cfg = cfg or AppConfig()
     reference = image.astype(np.float32).copy()

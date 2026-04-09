@@ -30,6 +30,14 @@ class PreprocessConfig:
     crop_dark_threshold: int = 25
     crop_min_run_ratio: float = 0.50
     max_border_crop_fraction: float = 0.08
+    paper_white_min_value: int = 180
+    paper_white_max_saturation: int = 80
+    paper_support_ratio_threshold: float = 0.18
+    paper_dynamic_col_quantile: float = 0.90
+    paper_dynamic_col_scale: float = 0.68
+    paper_smooth_window_px: int = 41
+    paper_bbox_padding_px: int = 6
+    paper_min_bbox_inside_fraction: float = 0.78
     background_percentile_low: float = 2.0
     background_percentile_high: float = 98.0
     clip_limit: float = 2.0

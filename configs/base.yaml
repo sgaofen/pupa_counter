@@ -12,6 +12,14 @@ preprocess:
   crop_dark_threshold: 25
   crop_min_run_ratio: 0.50
   max_border_crop_fraction: 0.08
+  paper_white_min_value: 180
+  paper_white_max_saturation: 80
+  paper_support_ratio_threshold: 0.18
+  paper_dynamic_col_quantile: 0.90
+  paper_dynamic_col_scale: 0.68
+  paper_smooth_window_px: 41
+  paper_bbox_padding_px: 6
+  paper_min_bbox_inside_fraction: 0.78
   background_percentile_low: 2
   background_percentile_high: 98
   clip_limit: 2.0

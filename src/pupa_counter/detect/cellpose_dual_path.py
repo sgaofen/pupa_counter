@@ -17,6 +17,7 @@ import pandas as pd
 from skimage import measure
 
 from pupa_counter.config import AppConfig
+from pupa_counter.preprocess.paper_region import bbox_fraction_inside_paper_bounds, centroid_inside_paper_bounds
 
 
 def _bbox_iou(left: Tuple[int, int, int, int], right: Tuple[int, int, int, int]) -> float:
@@ -233,6 +234,7 @@ def merge_annotated_pair_rescue(
     *,
     image_shape,
     cfg: AppConfig,
+    paper_bounds=None,
 ) -> pd.DataFrame:
     if (
         primary_df.empty and classical_df.empty
@@ -297,6 +299,29 @@ def merge_annotated_pair_rescue(
                 cfg.counting.min_instance_confidence,
             ):
                 continue
+        if paper_bounds is not None:
+            child_centroids_inside = child_df.apply(
+                lambda row: centroid_inside_paper_bounds(
+                    row.get("centroid_x", 0.0),
+                    row.get("centroid_y", 0.0),
+                    paper_bounds,
+                ),
+                axis=1,
+            )
+            child_bbox_inside = child_df.apply(
+                lambda row: bbox_fraction_inside_paper_bounds(
+                    row.get("bbox_x0", 0.0),
+                    row.get("bbox_y0", 0.0),
+                    row.get("bbox_x1", 0.0),
+                    row.get("bbox_y1", 0.0),
+                    paper_bounds,
+                ),
+                axis=1,
+            )
+            if not child_centroids_inside.all():
+                continue
+            if (child_bbox_inside.astype(float) < cfg.preprocess.paper_min_bbox_inside_fraction).any():
+                continue
 
         patch_y0 = max(0, int(np.floor(child_df["bbox_y0"].astype(float).min() - reference_major * cfg.detector.cellpose_annotated_pair_rescue_padding_scale)))
         patch_x0 = max(0, int(np.floor(child_df["bbox_x0"].astype(float).min() - reference_major * cfg.detector.cellpose_annotated_pair_rescue_padding_scale)))
@@ -316,8 +341,15 @@ def merge_annotated_pair_rescue(
             else:
                 keep_base_rows.append(base_row)
         matched_base_count = len(matched_base_rows)
-        if matched_base_count != 1:
+        if matched_base_count not in {0, 1}:
             continue
+        if matched_base_count == 0:
+            mean_child_conf = float(child_df["confidence"].astype(float).mean())
+            if mean_child_conf < max(
+                cfg.detector.cellpose_annotated_pair_rescue_min_confidence + 0.08,
+                cfg.counting.min_instance_confidence,
+            ):
+                continue
 
         merged_parts: List[pd.DataFrame] = [child_df.copy()]
         if keep_base_rows:
