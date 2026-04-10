@@ -16,8 +16,21 @@ BAND_COLORS = {
 }
 
 
+def _draw_component_ellipse(canvas: np.ndarray, row: pd.Series, color) -> None:
+    center = (int(round(float(row["centroid_x"]))), int(round(float(row["centroid_y"]))))
+    axes = (
+        max(2, int(round(float(row["major_axis_px"]) / 2.0))),
+        max(2, int(round(float(row["minor_axis_px"]) / 2.0))),
+    )
+    angle_deg = -float(np.rad2deg(float(row.get("orientation_rad", 0.0))))
+    cv2.ellipse(canvas, center, axes, angle_deg, 0, 360, color, 2, cv2.LINE_AA)
+
+
 def _draw_component_contour(canvas: np.ndarray, row: pd.Series, color) -> None:
     if bool(row.get("synthetic_instance", False)):
+        return
+    if bool(row.get("cv_center_only", False)):
+        _draw_component_ellipse(canvas, row, color)
         return
     local_mask = row["mask"].astype(np.uint8) * 255
     contours, _ = cv2.findContours(local_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -66,6 +79,7 @@ def build_overlay(
     candidate_df: pd.DataFrame = None,
     *,
     show_middle_labels: bool = False,
+    show_unresolved_clusters: bool = False,
 ) -> np.ndarray:
     overlay = image.copy()
     n_top_5pct = 0
@@ -87,6 +101,15 @@ def build_overlay(
                     for display_idx, orig_idx in enumerate(middle_df["index"].tolist(), start=1)
                 }
 
+        # Assign sequential numbers to ALL accepted pupae for easy verification
+        sorted_instances = instances_df.loc[
+            ~instances_df.get("synthetic_instance", pd.Series(False, index=instances_df.index)).astype(bool)
+        ].sort_values(["centroid_y", "centroid_x"], kind="mergesort")
+        all_labels = {
+            int(orig_idx): str(display_idx)
+            for display_idx, orig_idx in enumerate(sorted_instances.index.tolist(), start=1)
+        }
+
         for row_idx, row in instances_df.iterrows():
             band = row.get("band", "middle")
             color = BAND_COLORS.get(band, (255, 255, 0))
@@ -94,11 +117,11 @@ def build_overlay(
             if not bool(row.get("synthetic_instance", False)):
                 center = (int(round(row["centroid_x"])), int(round(row["centroid_y"])))
                 cv2.circle(overlay, center, 4, color, -1)
-                label = middle_labels.get(int(row_idx))
+                label = all_labels.get(int(row_idx))
                 if label is not None:
                     _draw_instance_label(overlay, center, label, color)
 
-    if candidate_df is not None and not candidate_df.empty:
+    if show_unresolved_clusters and candidate_df is not None and not candidate_df.empty:
         hard_clusters = candidate_df.loc[
             candidate_df["is_active"].astype(bool) & candidate_df["cluster_unresolved"].astype(bool)
         ]

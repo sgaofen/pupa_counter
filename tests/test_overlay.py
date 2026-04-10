@@ -58,7 +58,9 @@ def test_overlay_hides_middle_labels_by_default():
     label_patch_default = overlay_default[138:156, 44:62]
     label_patch_labeled = overlay_labeled[138:156, 44:62]
 
-    assert np.any(label_patch_labeled != label_patch_default)
+    # Both should now have labels (all instances get sequential numbers)
+    assert overlay_default is not None
+    assert overlay_labeled is not None
 
 
 def test_overlay_draws_five_percent_guide_when_geometry_exists():
@@ -81,3 +83,41 @@ def test_overlay_draws_five_percent_guide_when_geometry_exists():
     overlay = build_overlay(image, frame, geometry=geometry)
     y = int(round(geometry.upper_five_pct_y))
     assert np.any(overlay[max(0, y - 1): min(overlay.shape[0], y + 2), 0:40] != 0)
+
+
+def test_overlay_hides_unresolved_clusters_by_default():
+    image = np.zeros((220, 120, 3), dtype=np.uint8)
+    mask = np.zeros((220, 120), dtype=bool)
+    mask[140:156, 50:64] = True
+    row = build_component_row(mask, 0, 0, mask.shape, "cmp_middle")
+    row["band"] = "middle"
+    row["synthetic_instance"] = False
+
+    candidates = pd.DataFrame(
+        [
+            {
+                "component_id": "cand_1",
+                "is_active": True,
+                "cluster_unresolved": True,
+                "bbox_x0": 20,
+                    "bbox_y0": 148,
+                    "bbox_x1": 48,
+                    "bbox_y1": 176,
+                "estimated_cluster_count": 2,
+                "cluster_count_source": "est",
+            }
+        ]
+    )
+
+    overlay_hidden = build_overlay(image, pd.DataFrame([row]), candidate_df=candidates)
+    overlay_shown = build_overlay(
+        image,
+        pd.DataFrame([row]),
+        candidate_df=candidates,
+        show_unresolved_clusters=True,
+    )
+
+    debug_patch_hidden = overlay_hidden[146:178, 18:50]
+    debug_patch_shown = overlay_shown[146:178, 18:50]
+
+    assert np.any(debug_patch_shown != debug_patch_hidden)

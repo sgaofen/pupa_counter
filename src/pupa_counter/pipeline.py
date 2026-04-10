@@ -17,6 +17,11 @@ from pupa_counter.count.assign import assign_bands
 from pupa_counter.count.summarize import combine_instances_for_counting, select_final_instances, summarize_counts
 from pupa_counter.detect.brown_mask import detect_brown_candidates
 from pupa_counter.detect.classifier import apply_optional_classifier, load_classifier
+from pupa_counter.detect.cv_peak_deblend import (
+    compute_fast_brown_score,
+    refine_component_candidates as refine_cv_components,
+    refine_labeled_candidates as refine_cv_labeled,
+)
 from pupa_counter.detect.cellpose_dual_path import merge_annotated_detection_paths, merge_annotated_pair_rescue
 from pupa_counter.detect.cellpose_postprocess import (
     build_annotated_png_supplement,
@@ -312,12 +317,47 @@ def run_pipeline(
                 if not supplement_df.empty:
                     labeled_df = pd.concat([labeled_df, supplement_df], ignore_index=True)
             split_df = labeled_df
-        else:
+        elif cfg.detector.backend == "cv_peak_deblend":
+            detection_image = reference_view if record.source_type == "annotated_png" else cleaned
+            feature_image = cleaned
+            brown_mask = detect_brown_candidates(feature_image, blue_mask=blue_mask, cfg=cfg)
+            base_components_df = extract_components(brown_mask, cfg)
+            if not base_components_df.empty:
+                cv_components_df = refine_cv_components(
+                    base_components_df,
+                    compute_fast_brown_score(detection_image),
+                    brown_mask > 0,
+                    cfg,
+                    blue_mask=blue_mask,
+                    paper_bounds=paper_bounds,
+                    component_prefix="cv",
+                )
+                cv_features_df = featurize_components(feature_image, blue_mask, cv_components_df) if not cv_components_df.empty else cv_components_df.copy()
+                cv_labeled_df = rule_classify_components(cv_features_df, cfg) if not cv_features_df.empty else cv_features_df.copy()
+                cv_labeled_df = refine_cv_labeled(
+                    cv_labeled_df,
+                    score_image=compute_fast_brown_score(detection_image),
+                    foreground_mask=brown_mask > 0,
+                    feature_image=feature_image,
+                    blue_mask=blue_mask,
+                    paper_bounds=paper_bounds,
+                    cfg=cfg,
+                ) if not cv_labeled_df.empty else cv_labeled_df.copy()
+                split_df = (
+                    split_cluster_candidates(feature_image, cv_labeled_df, blue_mask=blue_mask, cfg=cfg)
+                    if not cv_labeled_df.empty
+                    else cv_labeled_df.copy()
+                )
+            else:
+                split_df = base_components_df.copy()
+        elif cfg.detector.backend == "classical":
             brown_mask = detect_brown_candidates(cleaned, blue_mask=blue_mask, cfg=cfg)
             components_df = extract_components(brown_mask, cfg)
             features_df = featurize_components(cleaned, blue_mask, components_df) if not components_df.empty else components_df.copy()
             labeled_df = rule_classify_components(features_df, cfg) if not features_df.empty else features_df.copy()
             split_df = split_cluster_candidates(cleaned, labeled_df, blue_mask=blue_mask, cfg=cfg) if not labeled_df.empty else labeled_df.copy()
+        else:
+            raise ValueError(f"Unknown detector backend: {cfg.detector.backend}")
         classified_df = apply_optional_classifier(split_df, classifier=classifier, cfg=cfg) if not split_df.empty else split_df.copy()
         classified_df = attach_cluster_count_estimates(classified_df, cfg)
         vision_cluster_df = estimate_cluster_counts_with_openai(cleaned, classified_df, cfg)
@@ -431,6 +471,7 @@ def run_pipeline(
                 flags=flags,
                 candidate_df=classified_df,
                 show_middle_labels=cfg.output.overlay_show_middle_labels,
+                show_unresolved_clusters=cfg.output.overlay_show_unresolved_clusters,
             )
             save_image(run_dirs["overlays"] / ("%s.png" % record.image_id), overlay)
 

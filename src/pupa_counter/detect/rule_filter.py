@@ -98,7 +98,10 @@ def rule_classify_components(features_df: pd.DataFrame, cfg: AppConfig = None) -
         # A component is "yellow imprint" if its mean lab b* is high AND
         # its mean V is high (i.e. bright pale yellow). Dark brown eggs
         # may have moderately high b* but low V, so they pass.
-        component_too_yellow = mean_lab_b > 145 and mean_v > 140
+        # Guard: components with strong brown color_score are NOT yellow
+        # imprints even if their lab_b / V stats land in the yellow zone
+        # (common for CV-generated masks that include some background).
+        component_too_yellow = mean_lab_b > 145 and mean_v > 140 and color_score < 0.35
 
         label = "artifact"
         if area < cfg.components.min_area_px:
