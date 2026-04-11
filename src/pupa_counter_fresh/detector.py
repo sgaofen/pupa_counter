@@ -24,6 +24,7 @@ import pandas as pd
 from .preprocess import build_blue_mask, downscale, load_image_rgb
 from .response import build_allowed_mask, compute_response_map
 from .peaks import PeakConfig, detect_peaks
+from .paper_roi import PaperROIConfig, apply_paper_roi_to_response, detect_paper_roi
 from .resolver_cv import (
     ComponentSplitConfig,
     detect_peaks_by_component,
@@ -56,6 +57,31 @@ class DetectorConfig:
     """Disabled by default. The absolute threshold is already permissive
     enough for every scan in the 20-image benchmark."""
 
+    # v2 — paper ROI (pre-response gate)
+    use_paper_roi: bool = False
+    """When True, detect the paper region via the largest bright connected
+    component and zero out the response outside it. Eliminates the left-edge
+    scanner gray-strip failure mode on both v1 and the v8 teacher — see
+    docs/FRESH_START_V2_RESEARCH_2026-04-10.md for the visual evidence."""
+    paper_roi_brightness_threshold: int = 180
+    paper_roi_close_kernel_px: int = 15
+    paper_roi_erode_margin_px: int = 6
+    paper_roi_min_paper_fraction: float = 0.05
+
+    # v2 — response sharpening mode
+    response_mode: str = "smooth"
+    """Which response computation path to use: ``smooth`` (v1 default, plain
+    Gaussian blur), ``log`` (single-sigma Laplacian-of-Gaussian approximation),
+    ``dog`` (difference-of-Gaussians with independent low/high sigmas), or
+    ``adaptive`` (per-component sigma selection). ``smooth`` is bit-compatible
+    with v1 when the other sharpening parameters are left at their defaults."""
+    log_sigma: float = 1.0
+    dog_sigma_low: float = 0.8
+    dog_sigma_high: float = 2.0
+    adaptive_small_sigma: float = 0.6
+    adaptive_large_sigma: float = 1.4
+    adaptive_area_threshold_px: int = 500
+
     # Peak NMS
     peak_min_distance_px: int = 10
     """In *detector-resolution* pixels (i.e. already accounting for
@@ -73,10 +99,12 @@ class DetectorConfig:
     """When True, replace the single global ``detect_peaks`` call with a
     per-component ``detect_peaks_by_component`` call so dense blobs can
     produce multiple peaks. This is the v1 watershed-lite resolver."""
-    component_single_pupa_area_px: float = 230.0
-    component_area_ratio_threshold: float = 1.35
-    component_min_peak_distance_px: int = 5
-    component_abs_score_threshold: float = 0.20
+    component_single_pupa_area_px: float = 200.0
+    """v1-tuned. See docs/FRESH_START_PEAK_FIRST_2026-04-10.md — sweep on
+    the 5 hard images converged on ``area=200, ratio=1.20, mind=3, thr=0.18``."""
+    component_area_ratio_threshold: float = 1.20
+    component_min_peak_distance_px: int = 3
+    component_abs_score_threshold: float = 0.18
     component_min_component_area_px: int = 60
     component_max_peaks: int = 20
 
@@ -210,7 +238,28 @@ def run_detector(
         rgb_work,
         blue_mask=blue_mask,
         smooth_sigma=cfg.smooth_sigma,
+        response_mode=cfg.response_mode,
+        log_sigma=cfg.log_sigma,
+        dog_sigma_low=cfg.dog_sigma_low,
+        dog_sigma_high=cfg.dog_sigma_high,
+        adaptive_small_sigma=cfg.adaptive_small_sigma,
+        adaptive_large_sigma=cfg.adaptive_large_sigma,
+        adaptive_area_threshold_px=cfg.adaptive_area_threshold_px,
     )
+
+    paper_mask = None
+    if cfg.use_paper_roi:
+        paper_mask = detect_paper_roi(
+            rgb_work,
+            cfg=PaperROIConfig(
+                brightness_threshold=cfg.paper_roi_brightness_threshold,
+                close_kernel_px=cfg.paper_roi_close_kernel_px,
+                erode_margin_px=cfg.paper_roi_erode_margin_px,
+                min_paper_fraction=cfg.paper_roi_min_paper_fraction,
+            ),
+        )
+        response = apply_paper_roi_to_response(response, paper_mask)
+
     allowed_mask = build_allowed_mask(
         response,
         abs_threshold=cfg.allowed_abs_threshold,
@@ -295,5 +344,7 @@ def run_detector(
             "allowed_mask": allowed_mask,
             "peak_map": peak_map,
         }
+        if paper_mask is not None:
+            debug["paper_mask"] = paper_mask
 
     return DetectorOutput(instances=instances, debug=debug, runtime_ms=runtime_ms)

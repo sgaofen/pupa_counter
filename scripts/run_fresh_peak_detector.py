@@ -175,6 +175,28 @@ def main() -> int:
     parser.add_argument("--component-threshold", type=float, default=0.18)
     parser.add_argument("--component-min-area", type=int, default=60)
     parser.add_argument("--component-max-peaks", type=int, default=20)
+    parser.add_argument(
+        "--response-mode",
+        type=str,
+        default="smooth",
+        choices=["smooth", "log", "dog", "adaptive"],
+        help="Response map computation strategy (v2 response-sharpening).",
+    )
+    parser.add_argument("--smooth-sigma", type=float, default=1.2)
+    parser.add_argument("--log-sigma", type=float, default=1.0)
+    parser.add_argument("--dog-sigma-low", type=float, default=0.8)
+    parser.add_argument("--dog-sigma-high", type=float, default=2.0)
+    parser.add_argument("--adaptive-small-sigma", type=float, default=0.6)
+    parser.add_argument("--adaptive-large-sigma", type=float, default=1.4)
+    parser.add_argument("--adaptive-area-threshold", type=int, default=500)
+    parser.add_argument(
+        "--use-paper-roi",
+        action="store_true",
+        help="Enable paper ROI masking to suppress scanner-edge false positives.",
+    )
+    parser.add_argument("--paper-roi-brightness-threshold", type=int, default=180)
+    parser.add_argument("--paper-roi-close-kernel", type=int, default=15)
+    parser.add_argument("--paper-roi-erode-margin", type=int, default=6)
     args = parser.parse_args()
 
     if not args.image_dir.is_dir():
@@ -188,6 +210,7 @@ def main() -> int:
 
     cfg = DetectorConfig(
         work_scale=args.work_scale,
+        smooth_sigma=args.smooth_sigma,
         peak_abs_score_threshold=args.peak_threshold,
         peak_min_distance_px=args.peak_min_distance,
         allowed_abs_threshold=args.allowed_threshold,
@@ -198,6 +221,17 @@ def main() -> int:
         component_abs_score_threshold=args.component_threshold,
         component_min_component_area_px=args.component_min_area,
         component_max_peaks=args.component_max_peaks,
+        response_mode=args.response_mode,
+        log_sigma=args.log_sigma,
+        dog_sigma_low=args.dog_sigma_low,
+        dog_sigma_high=args.dog_sigma_high,
+        adaptive_small_sigma=args.adaptive_small_sigma,
+        adaptive_large_sigma=args.adaptive_large_sigma,
+        adaptive_area_threshold_px=args.adaptive_area_threshold,
+        use_paper_roi=args.use_paper_roi,
+        paper_roi_brightness_threshold=args.paper_roi_brightness_threshold,
+        paper_roi_close_kernel_px=args.paper_roi_close_kernel,
+        paper_roi_erode_margin_px=args.paper_roi_erode_margin,
         detector_backend=args.detector_backend,
         instance_source=args.instance_source,
     )
